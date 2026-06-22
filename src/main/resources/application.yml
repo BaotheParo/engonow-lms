@@ -1,0 +1,84 @@
+spring:
+  application:
+    name: engonow-lms
+
+  # ── Database ──────────────────────────────────────────────────────────────
+  datasource:
+    url: jdbc:mysql://localhost:3306/engonow_lms?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:secret}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 20000
+      idle-timeout: 300000
+
+  # ── JPA / Hibernate ───────────────────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: update           # Use 'validate' in production; 'update' for dev
+    show-sql: false              # Set true only during local debug
+    open-in-view: false          # CRITICAL: disable OSIV to prevent lazy-load leaks
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+        jdbc:
+          batch_size: 25         # Enable JDBC batching for bulk inserts
+          batch_versioned_data: true
+        order_inserts: true
+        order_updates: true
+
+  # ── Mail ──────────────────────────────────────────────────────────────────
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:noreply@engonow.com}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+
+  # ── Async Executor (for email + OMR upload) ───────────────────────────────
+  task:
+    execution:
+      pool:
+        core-size: 4
+        max-size: 16
+        queue-capacity: 100
+      thread-name-prefix: engonow-async-
+
+# ── Application-level Properties ──────────────────────────────────────────
+app:
+  jwt:
+    secret: ${JWT_SECRET:3cfa76ef14937c1c0ea519f8fc057a80fcd04a7420f8e8bcd0a7567c272e007b}
+    expiration-ms: 86400000      # 24 hours
+
+  cloudinary:
+    cloud-name: ${CLOUDINARY_CLOUD_NAME:demo}
+    api-key: ${CLOUDINARY_API_KEY:}
+    api-secret: ${CLOUDINARY_API_SECRET:}
+
+  omr-service:
+    base-url: ${OMR_SERVICE_URL:http://localhost:8001}
+
+  webhook:
+    secret: ${WEBHOOK_SECRET:engonow-webhook-secret-2024}
+
+# ── Logging ───────────────────────────────────────────────────────────────
+logging:
+  level:
+    root: INFO
+    com.engonow.lms: DEBUG
+    org.springframework.security: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{traceId}] %logger{36} - %msg%n"
+  file:
+    name: logs/engonow-lms.log
+
+# ── Server ────────────────────────────────────────────────────────────────
+server:
+  port: 8080
+  servlet:
+    context-path: /
