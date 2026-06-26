@@ -1,7 +1,9 @@
 package com.engonow.lms;
 
+import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
 
 /**
  * ENGONOW Smart LMS – Spring Boot Entry Point
@@ -28,5 +30,10 @@ public class EngoNowLmsApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(EngoNowLmsApplication.class, args);
+    }
+
+    @Bean
+    public CommandLineRunner seedData(DatabaseSeeder seeder) {
+        return args -> seeder.seed();
     }
 }
