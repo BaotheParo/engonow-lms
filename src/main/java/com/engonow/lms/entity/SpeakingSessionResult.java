@@ -95,7 +95,13 @@ public class SpeakingSessionResult extends BaseEntity {
      * Uses IELTS rounding: round to nearest 0.5.
      */
     public void computeFinalBand() {
-        if (aiScore == null || tutorFluencyScore == null) return;
+        if (aiScore == null
+            || tutorFluencyScore == null
+            || tutorLexicalScore == null
+            || tutorGrammarScore == null
+            || tutorPronunciationScore == null) {
+            return;
+        }
 
         BigDecimal avgTutor = tutorFluencyScore
             .add(tutorLexicalScore)

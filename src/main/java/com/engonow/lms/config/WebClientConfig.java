@@ -25,11 +25,11 @@ import java.util.concurrent.TimeUnit;
 @Configuration
 public class WebClientConfig {
 
-    @Value("${app.omr-service.base-url}")
-    private String omrServiceBaseUrl;
+    @Value("${app.ai-service.base-url}")
+    private String aiServiceBaseUrl;
 
-    @Bean(name = "omrWebClient")
-    public WebClient omrWebClient() {
+    @Bean(name = "aiWebClient")
+    public WebClient aiWebClient() {
         HttpClient httpClient = HttpClient.create()
             .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000)
             .responseTimeout(Duration.ofSeconds(30))
@@ -39,7 +39,7 @@ public class WebClientConfig {
             );
 
         return WebClient.builder()
-            .baseUrl(omrServiceBaseUrl)
+            .baseUrl(aiServiceBaseUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .defaultHeader("Content-Type", "application/json")
             .defaultHeader("X-Client-Id", "engonow-lms")
