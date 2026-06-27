@@ -1,6 +1,5 @@
 package com.engonow.lms.entity;
 
-import com.engonow.lms.enums.BookingStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -14,7 +13,7 @@ import java.math.RoundingMode;
  *  - Linked to MockTestBooking via @OneToOne (owning side, holds the FK).
  *  - AI Score (0-9 IELTS band): stored as DECIMAL(4,2) for precision (e.g., 6.50).
  *  - Tutor rubric scores: 4 IELTS criteria (Fluency, Lexical, Grammar, Pronunciation).
- *  - finalBand: computed and stored on save — avoids recalculation on every read.
+ *  - overallBand: computed and stored on save — avoids recalculation on every read.
  *  - sessionId: the opaque ID returned by the AI service in the webhook callback,
  *    used for idempotency (re-delivered webhooks with same sessionId are ignored).
  */
@@ -50,7 +49,19 @@ public class SpeakingSessionResult extends BaseEntity {
     @Column(name = "session_id", nullable = false, length = 100)
     private String sessionId;
 
-    // ── AI Grading (80% weight) ───────────────────────────────────────────
+    // ── AI Grading Sub-Scores (80% weight component details) ──────────────
+
+    @Column(name = "pronunciation_score", precision = 3, scale = 1)
+    private BigDecimal pronunciationScore;
+
+    @Column(name = "fluency_score", precision = 3, scale = 1)
+    private BigDecimal fluencyScore;
+
+    @Column(name = "lexical_score", precision = 3, scale = 1)
+    private BigDecimal lexicalScore;
+
+    @Column(name = "grammar_score", precision = 3, scale = 1)
+    private BigDecimal grammarScore;
 
     @Column(name = "ai_score", precision = 4, scale = 2)
     private BigDecimal aiScore;
@@ -79,11 +90,11 @@ public class SpeakingSessionResult extends BaseEntity {
     // ── Computed Final Result ─────────────────────────────────────────────
 
     /**
-     * finalBand = (aiScore * 0.80) + (avgTutorScore * 0.20)
+     * overallBand = (aiScore * 0.80) + (avgTutorScore * 0.20)
      * Rounded to nearest 0.5 per IELTS band conventions.
      */
-    @Column(name = "final_band", precision = 3, scale = 1)
-    private BigDecimal finalBand;
+    @Column(name = "overall_band", precision = 3, scale = 1)
+    private BigDecimal overallBand;
 
     @Builder.Default
     @Column(name = "is_complete", nullable = false)
@@ -92,8 +103,8 @@ public class SpeakingSessionResult extends BaseEntity {
     // ── Business Logic ────────────────────────────────────────────────────
 
     /**
-     * Call this once both AI and tutor scores are available to compute the final band.
-     * Uses IELTS rounding: round to nearest 0.5.
+     * Call this once both AI and tutor scores are available to compute the overall band.
+     * Uses IELTS rounding: round to nearest 0.5 using remainder extraction.
      */
     public void computeFinalBand() {
         if (aiScore == null
@@ -113,11 +124,21 @@ public class SpeakingSessionResult extends BaseEntity {
         BigDecimal raw = aiScore.multiply(new BigDecimal("0.80"))
             .add(avgTutor.multiply(new BigDecimal("0.20")));
 
-        // IELTS rounding: to nearest 0.5
-        this.finalBand = raw.multiply(BigDecimal.valueOf(2))
-            .setScale(0, RoundingMode.HALF_UP)
-            .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
+        // IELTS rounding: to nearest 0.5 using pure BigDecimal remainder extraction
+        BigDecimal[] parts = raw.divideAndRemainder(BigDecimal.ONE);
+        BigDecimal integerPart = parts[0];
+        BigDecimal decimalPart = parts[1];
 
+        BigDecimal roundedDecimal;
+        if (decimalPart.compareTo(new BigDecimal("0.25")) < 0) {
+            roundedDecimal = BigDecimal.ZERO;
+        } else if (decimalPart.compareTo(new BigDecimal("0.75")) < 0) {
+            roundedDecimal = new BigDecimal("0.5");
+        } else {
+            roundedDecimal = BigDecimal.ONE;
+        }
+
+        this.overallBand = integerPart.add(roundedDecimal).setScale(1, RoundingMode.HALF_UP);
         this.isComplete = true;
     }
 }

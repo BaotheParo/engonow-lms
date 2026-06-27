@@ -1,5 +1,6 @@
 package com.engonow.lms.service.impl;
 
+import com.engonow.lms.dto.SpeakingEvidenceDTO;
 import com.engonow.lms.dto.SpeakingWebhookPayload;
 import com.engonow.lms.entity.MockTestBooking;
 import com.engonow.lms.entity.SpeakingSessionResult;
@@ -16,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Collections;
+import java.util.List;
 
 @Service
 public class WebhookServiceImpl implements WebhookService {
@@ -61,36 +64,37 @@ public class WebhookServiceImpl implements WebhookService {
         SpeakingSessionResult result = speakingMapper.toEntity(payload);
         result.setBooking(booking);
 
-        // --- Evidence Integrity Rules ---
+        // Enforce null-safety on evidences list
+        List<SpeakingEvidenceDTO> evidenceList = payload.evidences() != null ? payload.evidences() : Collections.emptyList();
+
+        // --- Evidence Integrity Rules with pure BigDecimal practices ---
         BigDecimal grammarScore = payload.grammarScore();
-        long grammarEvidenceCount = 0;
-        if (payload.evidences() != null) {
-            grammarEvidenceCount = payload.evidences().stream()
-                    .filter(e -> "GRAMMAR".equalsIgnoreCase(e.criterion()))
-                    .count();
-        }
+        long grammarEvidenceCount = evidenceList.stream()
+                .filter(e -> "GRAMMAR".equalsIgnoreCase(e.criterion()))
+                .count();
         if (grammarScore.compareTo(BigDecimal.valueOf(7.0)) < 0 && grammarEvidenceCount < 2) {
             log.warn("AI penalized grammar score to {} without sufficient citable evidences. Overriding to 7.0", grammarScore);
             grammarScore = BigDecimal.valueOf(7.0);
         }
 
         BigDecimal lexicalScore = payload.lexicalScore();
-        long lexicalEvidenceCount = 0;
-        if (payload.evidences() != null) {
-            lexicalEvidenceCount = payload.evidences().stream()
-                    .filter(e -> "LEXICAL".equalsIgnoreCase(e.criterion()))
-                    .count();
-        }
+        long lexicalEvidenceCount = evidenceList.stream()
+                .filter(e -> "LEXICAL".equalsIgnoreCase(e.criterion()))
+                .count();
         if (lexicalScore.compareTo(BigDecimal.valueOf(7.0)) < 0 && lexicalEvidenceCount < 2) {
             log.warn("AI penalized lexical score to {} without sufficient citable evidences. Overriding to 7.0", lexicalScore);
             lexicalScore = BigDecimal.valueOf(7.0);
         }
 
-        // Recalculate average AI score using corrected scores
-        BigDecimal sum = payload.pronunciationScore()
-                .add(payload.fluencyScore())
-                .add(grammarScore)
-                .add(lexicalScore);
+        // Set the final validated AI sub-scores on the entity
+        result.setGrammarScore(grammarScore);
+        result.setLexicalScore(lexicalScore);
+
+        // Recalculate overall average AI score using pure BigDecimal
+        BigDecimal sum = result.getPronunciationScore()
+                .add(result.getFluencyScore())
+                .add(result.getLexicalScore())
+                .add(result.getGrammarScore());
         BigDecimal correctedAiScore = sum.divide(BigDecimal.valueOf(4), 2, RoundingMode.HALF_UP);
         result.setAiScore(correctedAiScore);
 
@@ -113,7 +117,7 @@ public class WebhookServiceImpl implements WebhookService {
         result.setTutorPronunciationScore(fallbackTutorScore);
         result.setTutorComments("Fallback automatic base evaluation");
 
-        // Weighted average & IELTS rounding (nearest 0.5 or 0.0)
+        // Weighted average & IELTS rounding (nearest 0.5 or 0.0) via remainder extraction
         result.computeFinalBand();
 
         // Save Entity
