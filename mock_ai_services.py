@@ -36,12 +36,21 @@ class OmrAnswer(BaseModel):
     student_answer: str = Field(..., description="Recognised bubble: A, B, C, or D")
 
 
+class SpeakingEvidence(BaseModel):
+    criterion: str = Field(..., description="Evaluation criterion: GRAMMAR or LEXICAL")
+    quote: str = Field(..., description="Exact quote of student spoken utterance containing error/example")
+    error_type: str = Field(..., description="Categorised error type (e.g. Verb Tense, Vague Vocabulary)")
+    correction: str = Field(..., description="Suggested correction for the student's quote")
+    explanation: str = Field(..., description="Detailed explanation of the error and correction")
+
+
 class SpeakingAnalysisResult(BaseModel):
     session_id: str = Field(..., description="Unique speaking session identifier")
     pronunciation_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Pronunciation band (1.0–9.0)")
     fluency_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Fluency & Coherence band (1.0–9.0)")
     lexical_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Lexical Resource band (1.0–9.0)")
     grammar_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Grammatical Range & Accuracy band (1.0–9.0)")
+    evidences: List[SpeakingEvidence] = Field(default=[], description="Nested evidence list supporting the lexical and grammar bands")
     feedback_text: str = Field(..., description="AI-generated student feedback summary")
 
 
@@ -98,7 +107,7 @@ async def mock_omr_scan(
         "Accepts a session_id and audio_url via form fields. "
         "Simulates the Hybrid AI pipeline: Azure Pronunciation Assessment (80% weight) "
         "combined with LLM-based Lexical/Grammar analysis (20% weight). "
-        "Returns per-criterion IELTS band scores and a feedback summary."
+        "Returns per-criterion IELTS band scores and a feedback summary containing citable evidences."
     ),
 )
 async def mock_speaking_analyze(
@@ -116,26 +125,66 @@ async def mock_speaking_analyze(
     # Simulate Azure Pronunciation Assessment + LLM latency (500ms–1500ms)
     await asyncio.sleep(random.uniform(0.5, 1.5))
 
+    # Generate a random selection of evidences for grammar and lexical criteria
+    grammar_pool = [
+        SpeakingEvidence(
+            criterion="GRAMMAR",
+            quote="Yesterday I go to the marketplace with my family",
+            error_type="Verb Tense",
+            correction="Yesterday I went to the marketplace with my family",
+            explanation="Learner used present simple 'go' instead of past simple 'went' for a past action."
+        ),
+        SpeakingEvidence(
+            criterion="GRAMMAR",
+            quote="She don't like studying english at night",
+            error_type="Subject-Verb Agreement",
+            correction="She doesn't like studying English at night",
+            explanation="Subject 'She' (third-person singular) requires 'doesn't' instead of 'don't'."
+        )
+    ]
+
+    lexical_pool = [
+        SpeakingEvidence(
+            criterion="LEXICAL",
+            quote="I want to elevate my IELTS level because it is good",
+            error_type="Vague Vocabulary",
+            correction="I want to improve my IELTS score because it is crucial for my career",
+            explanation="Replaced generic word 'good' with precise professional vocabulary 'crucial for my career'."
+        ),
+        SpeakingEvidence(
+            criterion="LEXICAL",
+            quote="Studying abroad gives a big chance to learn new things",
+            error_type="Collocation Error",
+            correction="Studying abroad offers a great opportunity to acquire new knowledge",
+            explanation="Replaced generic 'gives a big chance' with formal collocation 'offers a great opportunity'."
+        )
+    ]
+
+    # Pick randomly 1 or 2 items from each pool to test validation overrides in Java backend
+    selected_grammar = random.sample(grammar_pool, k=random.choice([1, 2]))
+    selected_lexical = random.sample(lexical_pool, k=random.choice([1, 2]))
+    evidences = selected_grammar + selected_lexical
+
     result = SpeakingAnalysisResult(
         session_id=session_id,
         pronunciation_score=round(random.uniform(5.0, 9.0), 1),
         fluency_score=round(random.uniform(5.0, 9.0), 1),
         lexical_score=round(random.uniform(5.0, 9.0), 1),
         grammar_score=round(random.uniform(5.0, 9.0), 1),
+        evidences=evidences,
         feedback_text=(
-            "Good vocabulary range with attempts at idiomatic expression. "
-            "Watch out for final consonant deletion in words like 'past' and 'test'. "
-            "Sentence-level stress patterns need refinement for improved intelligibility. "
-            "Consider expanding use of cohesive devices to improve discourse coherence."
+            "Holistic feedback string describing overall performance. Good vocabulary range with "
+            "attempts at idiomatic expression. Sentence-level stress patterns need refinement."
         ),
     )
 
     logger.info(
         "[SPEAKING SERVICE] Analysis complete for session_id='%s'. "
-        "Pronunciation=%.1f, Fluency=%.1f, Lexical=%.1f, Grammar=%.1f",
+        "Pronunciation=%.1f, Fluency=%.1f, Lexical=%.1f, Grammar=%.1f | Evidences Count=%d",
         session_id,
         result.pronunciation_score, result.fluency_score,
         result.lexical_score, result.grammar_score,
+        len(evidences)
     )
 
     return result

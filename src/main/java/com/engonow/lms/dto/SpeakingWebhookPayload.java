@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
+import java.util.List;
 
 public record SpeakingWebhookPayload(
     @JsonProperty("session_id")
@@ -25,6 +26,9 @@ public record SpeakingWebhookPayload(
     @JsonProperty("grammar_score")
     @NotNull(message = "Grammar score must not be null")
     BigDecimal grammarScore,
+
+    @JsonProperty("evidences")
+    List<SpeakingEvidenceDTO> evidences,
 
     @JsonProperty("feedback_text")
     @NotBlank(message = "Feedback text must not be blank")

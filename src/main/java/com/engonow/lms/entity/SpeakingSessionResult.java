@@ -1,5 +1,6 @@
 package com.engonow.lms.entity;
 
+import com.engonow.lms.enums.BookingStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -54,8 +55,8 @@ public class SpeakingSessionResult extends BaseEntity {
     @Column(name = "ai_score", precision = 4, scale = 2)
     private BigDecimal aiScore;
 
-    @Column(name = "ai_feedback", columnDefinition = "TEXT")
-    private String aiFeedback;
+    @Column(name = "feedback_text", columnDefinition = "TEXT")
+    private String feedbackText;
 
     // ── Tutor Rubric (20% weight) ─────────────────────────────────────────
     // Each criterion is 0–9 IELTS band; average of 4 = tutor component score.

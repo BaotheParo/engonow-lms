@@ -8,25 +8,34 @@ import com.engonow.lms.mapper.SpeakingMapper;
 import com.engonow.lms.repository.MockTestBookingRepository;
 import com.engonow.lms.repository.SpeakingSessionResultRepository;
 import com.engonow.lms.service.WebhookService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 @Service
 public class WebhookServiceImpl implements WebhookService {
 
+    private static final Logger log = LoggerFactory.getLogger(WebhookServiceImpl.class);
+
     private final SpeakingSessionResultRepository speakingSessionResultRepository;
     private final MockTestBookingRepository mockTestBookingRepository;
     private final SpeakingMapper speakingMapper;
+    private final ObjectMapper objectMapper;
 
     public WebhookServiceImpl(
             SpeakingSessionResultRepository speakingSessionResultRepository,
             MockTestBookingRepository mockTestBookingRepository,
-            SpeakingMapper speakingMapper) {
+            SpeakingMapper speakingMapper,
+            ObjectMapper objectMapper) {
         this.speakingSessionResultRepository = speakingSessionResultRepository;
         this.mockTestBookingRepository = mockTestBookingRepository;
         this.speakingMapper = speakingMapper;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -52,6 +61,50 @@ public class WebhookServiceImpl implements WebhookService {
         SpeakingSessionResult result = speakingMapper.toEntity(payload);
         result.setBooking(booking);
 
+        // --- Evidence Integrity Rules ---
+        BigDecimal grammarScore = payload.grammarScore();
+        long grammarEvidenceCount = 0;
+        if (payload.evidences() != null) {
+            grammarEvidenceCount = payload.evidences().stream()
+                    .filter(e -> "GRAMMAR".equalsIgnoreCase(e.criterion()))
+                    .count();
+        }
+        if (grammarScore.compareTo(BigDecimal.valueOf(7.0)) < 0 && grammarEvidenceCount < 2) {
+            log.warn("AI penalized grammar score to {} without sufficient citable evidences. Overriding to 7.0", grammarScore);
+            grammarScore = BigDecimal.valueOf(7.0);
+        }
+
+        BigDecimal lexicalScore = payload.lexicalScore();
+        long lexicalEvidenceCount = 0;
+        if (payload.evidences() != null) {
+            lexicalEvidenceCount = payload.evidences().stream()
+                    .filter(e -> "LEXICAL".equalsIgnoreCase(e.criterion()))
+                    .count();
+        }
+        if (lexicalScore.compareTo(BigDecimal.valueOf(7.0)) < 0 && lexicalEvidenceCount < 2) {
+            log.warn("AI penalized lexical score to {} without sufficient citable evidences. Overriding to 7.0", lexicalScore);
+            lexicalScore = BigDecimal.valueOf(7.0);
+        }
+
+        // Recalculate average AI score using corrected scores
+        BigDecimal sum = payload.pronunciationScore()
+                .add(payload.fluencyScore())
+                .add(grammarScore)
+                .add(lexicalScore);
+        BigDecimal correctedAiScore = sum.divide(BigDecimal.valueOf(4), 2, RoundingMode.HALF_UP);
+        result.setAiScore(correctedAiScore);
+
+        // Serialize the entire evidences list into a beautiful formatted JSON string and store in feedbackText
+        String serializedEvidences = "[]";
+        if (payload.evidences() != null) {
+            try {
+                serializedEvidences = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(payload.evidences());
+            } catch (Exception e) {
+                log.error("Failed to serialize speaking evidences", e);
+            }
+        }
+        result.setFeedbackText(serializedEvidences);
+
         // Fallback tutor scores: 6.0 representing 20% weight
         BigDecimal fallbackTutorScore = BigDecimal.valueOf(6.0);
         result.setTutorFluencyScore(fallbackTutorScore);
@@ -60,7 +113,7 @@ public class WebhookServiceImpl implements WebhookService {
         result.setTutorPronunciationScore(fallbackTutorScore);
         result.setTutorComments("Fallback automatic base evaluation");
 
-        // Weighted average & IELTS rounding (nearest 0.5 or 0.0) is handled internally in computeFinalBand()
+        // Weighted average & IELTS rounding (nearest 0.5 or 0.0)
         result.computeFinalBand();
 
         // Save Entity

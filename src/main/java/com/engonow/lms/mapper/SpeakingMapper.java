@@ -14,7 +14,7 @@ import java.math.RoundingMode;
 public interface SpeakingMapper {
 
     @Mapping(source = "sessionId", target = "sessionId")
-    @Mapping(source = "feedbackText", target = "aiFeedback")
+    @Mapping(source = "feedbackText", target = "feedbackText")
     @Mapping(source = "payload", target = "aiScore", qualifiedByName = "calculateAiScore")
     SpeakingSessionResult toEntity(SpeakingWebhookPayload payload);
 
