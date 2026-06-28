@@ -33,6 +33,11 @@ public class EngoNowLmsApplication {
     }
 
     @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+            name = "app.seeding.enabled",
+            havingValue = "true",
+            matchIfMissing = true
+    )
     public CommandLineRunner seedData(DatabaseSeeder seeder) {
         return args -> seeder.seed();
     }

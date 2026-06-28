@@ -3,6 +3,8 @@ package com.engonow.lms;
 import com.engonow.lms.entity.*;
 import com.engonow.lms.enums.*;
 import com.engonow.lms.repository.*;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +20,9 @@ public class DatabaseSeeder {
     private final MockTestBookingRepository bookingRepository;
     private final SpeakingSessionResultRepository speakingSessionResultRepository;
     private final TestSubmissionRepository testSubmissionRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public DatabaseSeeder(
             UserRepository userRepository,
@@ -37,20 +42,18 @@ public class DatabaseSeeder {
     @Transactional
     public void seed() {
         System.out.println("[SEED] Clearing existing data...");
-        testSubmissionRepository.deleteAll();
-        speakingSessionResultRepository.deleteAll();
-        bookingRepository.deleteAll();
-        slotRepository.deleteAll();
-        examRepository.deleteAll();
-        userRepository.deleteAll();
+        // Disable foreign key checks to allow fast and safe truncation/deletion of all tables
+        entityManager.createNativeQuery("SET FOREIGN_KEY_CHECKS = 0").executeUpdate();
 
-        // Flush immediately to execute DELETE statements in DB before executing INSERTs
-        testSubmissionRepository.flush();
-        speakingSessionResultRepository.flush();
-        bookingRepository.flush();
-        slotRepository.flush();
-        examRepository.flush();
-        userRepository.flush();
+        testSubmissionRepository.deleteAllInBatch();
+        speakingSessionResultRepository.deleteAllInBatch();
+        bookingRepository.deleteAllInBatch();
+        slotRepository.deleteAllInBatch();
+        examRepository.deleteAllInBatch();
+        userRepository.deleteAllInBatch();
+
+        // Re-enable foreign key checks after clear
+        entityManager.createNativeQuery("SET FOREIGN_KEY_CHECKS = 1").executeUpdate();
 
         System.out.println("[SEED] Seeding fresh test data...");
 
