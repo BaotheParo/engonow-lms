@@ -21,6 +21,7 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -51,11 +52,11 @@ public class WebhookServiceImpl implements WebhookService {
         MockTestBooking booking = mockTestBookingRepository.findById(bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("MockTestBooking not found for ID: " + bookingId));
 
-        // Use SpeakingMapper to populate entity fields from payload
+        // Use SpeakingMapper to populate entity fields from payload (e.g. feedbackText)
         SpeakingSessionResult result = speakingMapper.toEntity(payload);
         result.setBooking(booking);
 
-        // --- Business Rule 1: Evidence Filtering & Null-Safety ---
+        // --- Business Rule 1: Evidence Filtering & Null-Safety with Regex Boundaries ---
         List<SpeakingEvidenceDTO> filteredEvidences = new ArrayList<>();
         List<SpeakingEvidenceDTO> inputEvidences = payload.evidences() != null ? payload.evidences() : Collections.emptyList();
         List<SpeakingWebhookPayload.SpeakingSelfCorrectionDTO> selfCorrections = payload.selfCorrections() != null ? payload.selfCorrections() : Collections.emptyList();
@@ -65,11 +66,11 @@ public class WebhookServiceImpl implements WebhookService {
                 boolean isGrammar = "GRAMMAR".equalsIgnoreCase(evidence.criterion());
                 boolean shouldDrop = false;
                 if (isGrammar && evidence.quote() != null) {
-                    String lowerQuote = evidence.quote().toLowerCase();
                     for (SpeakingWebhookPayload.SpeakingSelfCorrectionDTO selfCorr : selfCorrections) {
                         if (selfCorr != null && selfCorr.original() != null) {
-                            String lowerOriginal = selfCorr.original().toLowerCase();
-                            if (lowerQuote.contains(lowerOriginal)) {
+                            String regex = "(?i)\\b" + Pattern.quote(selfCorr.original()) + "\\b";
+                            Pattern pattern = Pattern.compile(regex);
+                            if (pattern.matcher(evidence.quote()).find()) {
                                 shouldDrop = true;
                                 break;
                             }
@@ -105,7 +106,7 @@ public class WebhookServiceImpl implements WebhookService {
         result.setGrammarScore(grammarScore);
         result.setLexicalScore(lexicalScore);
 
-        // Recalculate overall average AI score using pure BigDecimal
+        // Calculate and set aiScore after all evidence overriding is completed (Single source of truth)
         BigDecimal sum = result.getPronunciationScore()
                 .add(result.getFluencyScore())
                 .add(result.getLexicalScore())
@@ -124,14 +125,14 @@ public class WebhookServiceImpl implements WebhookService {
         }
         result.setSelfCorrectionsText(selfCorrectionsJson);
 
-        // Serialize the filtered evidences list into a beautiful formatted JSON string and store in feedbackText
+        // Serialize the filtered evidences list into a beautiful formatted JSON string and store in evidencesText
         String serializedEvidences = "[]";
         try {
             serializedEvidences = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(filteredEvidences);
         } catch (Exception e) {
             log.error("Failed to serialize speaking evidences", e);
         }
-        result.setFeedbackText(serializedEvidences);
+        result.setEvidencesText(serializedEvidences);
 
         // Fallback tutor scores: 6.0 representing 20% weight
         BigDecimal fallbackTutorScore = BigDecimal.valueOf(6.0);
