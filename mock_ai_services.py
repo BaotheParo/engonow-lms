@@ -44,6 +44,13 @@ class SpeakingEvidence(BaseModel):
     explanation: str = Field(..., description="Detailed explanation of the error and correction")
 
 
+class SelfCorrection(BaseModel):
+    original: str = Field(..., description="The original word/phrase before self-correction")
+    marker: str = Field(..., description="The marker word used (e.g. sorry, I mean, no)")
+    corrected: str = Field(..., description="The corrected word/phrase")
+    type: str = Field(..., description="Type of self-correction: GRAMMAR or LEXICAL")
+
+
 class SpeakingAnalysisResult(BaseModel):
     session_id: str = Field(..., description="Unique speaking session identifier")
     pronunciation_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Pronunciation band (1.0–9.0)")
@@ -51,6 +58,7 @@ class SpeakingAnalysisResult(BaseModel):
     lexical_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Lexical Resource band (1.0–9.0)")
     grammar_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Grammatical Range & Accuracy band (1.0–9.0)")
     evidences: List[SpeakingEvidence] = Field(default=[], description="Nested evidence list supporting the lexical and grammar bands")
+    self_corrections: List[SelfCorrection] = Field(default=[], description="List of self-corrections detected in student response")
     feedback_text: str = Field(..., description="AI-generated student feedback summary")
 
 
@@ -165,6 +173,22 @@ async def mock_speaking_analyze(
     selected_lexical = random.sample(lexical_pool, k=random.choice([1, 2]))
     evidences = selected_grammar + selected_lexical
 
+    # Inject static mocked self-corrections list for evaluation gatekeeper testing
+    self_corrections = [
+        SelfCorrection(
+            original="I go",
+            marker="sorry",
+            corrected="I went",
+            type="GRAMMAR"
+        ),
+        SelfCorrection(
+            original="She don't",
+            marker="I mean",
+            corrected="She doesn't",
+            type="GRAMMAR"
+        )
+    ]
+
     result = SpeakingAnalysisResult(
         session_id=session_id,
         pronunciation_score=round(random.uniform(5.0, 9.0), 1),
@@ -172,6 +196,7 @@ async def mock_speaking_analyze(
         lexical_score=round(random.uniform(5.0, 9.0), 1),
         grammar_score=round(random.uniform(5.0, 9.0), 1),
         evidences=evidences,
+        self_corrections=self_corrections,
         feedback_text=(
             "Holistic feedback string describing overall performance. Good vocabulary range with "
             "attempts at idiomatic expression. Sentence-level stress patterns need refinement."
@@ -180,11 +205,11 @@ async def mock_speaking_analyze(
 
     logger.info(
         "[SPEAKING SERVICE] Analysis complete for session_id='%s'. "
-        "Pronunciation=%.1f, Fluency=%.1f, Lexical=%.1f, Grammar=%.1f | Evidences Count=%d",
+        "Pronunciation=%.1f, Fluency=%.1f, Lexical=%.1f, Grammar=%.1f | Evidences Count=%d | Self-Corrections=%d",
         session_id,
         result.pronunciation_score, result.fluency_score,
         result.lexical_score, result.grammar_score,
-        len(evidences)
+        len(evidences), len(self_corrections)
     )
 
     return result

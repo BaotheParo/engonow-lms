@@ -30,7 +30,17 @@ public record SpeakingWebhookPayload(
     @JsonProperty("evidences")
     List<SpeakingEvidenceDTO> evidences,
 
+    @JsonProperty("self_corrections")
+    List<SpeakingSelfCorrectionDTO> selfCorrections,
+
     @JsonProperty("feedback_text")
     @NotBlank(message = "Feedback text must not be blank")
     String feedbackText
-) {}
+) {
+    public record SpeakingSelfCorrectionDTO(
+        String original,
+        String marker,
+        String corrected,
+        String type
+    ) {}
+}

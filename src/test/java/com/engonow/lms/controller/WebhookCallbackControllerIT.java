@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -70,6 +71,7 @@ public class WebhookCallbackControllerIT {
                 BigDecimal.valueOf(8.0),
                 BigDecimal.valueOf(6.0), // Under 7.0, triggers override
                 evidences,
+                Collections.emptyList(),
                 "Feedback text"
         );
 
@@ -110,6 +112,7 @@ public class WebhookCallbackControllerIT {
                 BigDecimal.valueOf(7.5),
                 BigDecimal.valueOf(8.0),
                 BigDecimal.valueOf(7.5),
+                Collections.emptyList(),
                 Collections.emptyList(),
                 "Feedback text"
         );
@@ -157,6 +160,7 @@ public class WebhookCallbackControllerIT {
                 BigDecimal.valueOf(8.0),
                 BigDecimal.valueOf(7.0),
                 Collections.emptyList(),
+                Collections.emptyList(),
                 "Feedback text"
         );
 
@@ -165,5 +169,73 @@ public class WebhookCallbackControllerIT {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(payload)))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    public void testHandleWebhook_Success_WithSelfCorrectionFiltering() throws Exception {
+        // Arrange
+        MockTestBooking mockBooking = mockTestBookingRepository.findAll().stream()
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No test booking seeded in the database"));
+        String sessionId = mockBooking.getId().toString();
+
+        // Create evidence list containing a self-corrected grammar item
+        List<SpeakingEvidenceDTO> evidences = List.of(
+                new SpeakingEvidenceDTO(
+                        "GRAMMAR",
+                        "Yesterday I go to the marketplace with my family", // Contains "I go", which is self-corrected
+                        "Verb Tense",
+                        "Yesterday I went to the marketplace with my family",
+                        "Learner used present simple 'go' instead of past simple 'went'."
+                ),
+                new SpeakingEvidenceDTO(
+                        "LEXICAL",
+                        "I want to elevate my IELTS level because it is good",
+                        "Vague Vocabulary",
+                        "I want to improve my IELTS score",
+                        "Replaced generic word."
+                )
+        );
+
+        // Self-correction list
+        List<SpeakingWebhookPayload.SpeakingSelfCorrectionDTO> selfCorrections = List.of(
+                new SpeakingWebhookPayload.SpeakingSelfCorrectionDTO(
+                        "I go",
+                        "sorry",
+                        "I went",
+                        "GRAMMAR"
+                )
+        );
+
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.5),
+                BigDecimal.valueOf(8.0),
+                BigDecimal.valueOf(6.0), // Under 7.0
+                evidences,
+                selfCorrections,
+                "Feedback text"
+        );
+
+        // Act
+        mockMvc.perform(post("/api/v1/callback/ai-grading")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isOk());
+
+        // Assert
+        SpeakingSessionResult savedResult = speakingSessionResultRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new AssertionError("SpeakingSessionResult was not saved to database"));
+
+        // Grammar evidence with quote containing "I go" should be dropped.
+        // Therefore, grammarEvidenceCount goes from 1 down to 0.
+        // Since grammarEvidenceCount < 2 and score < 7.0, it triggers override to 7.0!
+        assertEquals(0, BigDecimal.valueOf(7.0).compareTo(savedResult.getGrammarScore()));
+
+        // Check that self_corrections_text is correctly serialized to JSON in the database
+        assertTrue(savedResult.getSelfCorrectionsText().contains("I go"));
+        assertTrue(savedResult.getSelfCorrectionsText().contains("sorry"));
+        assertTrue(savedResult.getSelfCorrectionsText().contains("I went"));
     }
 }

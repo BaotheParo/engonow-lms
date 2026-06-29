@@ -16,6 +16,7 @@ public interface SpeakingMapper {
     @Mapping(source = "sessionId", target = "sessionId")
     @Mapping(source = "feedbackText", target = "feedbackText")
     @Mapping(source = "payload", target = "aiScore", qualifiedByName = "calculateAiScore")
+    @Mapping(target = "selfCorrectionsText", ignore = true)
     SpeakingSessionResult toEntity(SpeakingWebhookPayload payload);
 
     @Named("calculateAiScore")

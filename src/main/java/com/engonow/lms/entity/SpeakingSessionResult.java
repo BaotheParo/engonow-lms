@@ -69,6 +69,9 @@ public class SpeakingSessionResult extends BaseEntity {
     @Column(name = "feedback_text", columnDefinition = "TEXT")
     private String feedbackText;
 
+    @Column(name = "self_corrections_text", columnDefinition = "TEXT")
+    private String selfCorrectionsText;
+
     // ── Tutor Rubric (20% weight) ─────────────────────────────────────────
     // Each criterion is 0–9 IELTS band; average of 4 = tutor component score.
 
@@ -99,6 +102,16 @@ public class SpeakingSessionResult extends BaseEntity {
     @Builder.Default
     @Column(name = "is_complete", nullable = false)
     private Boolean isComplete = false;
+
+    // ── Getters and Setters for self_corrections_text ──────────────────────
+
+    public String getSelfCorrectionsText() {
+        return selfCorrectionsText;
+    }
+
+    public void setSelfCorrectionsText(String selfCorrectionsText) {
+        this.selfCorrectionsText = selfCorrectionsText;
+    }
 
     // ── Business Logic ────────────────────────────────────────────────────
 
