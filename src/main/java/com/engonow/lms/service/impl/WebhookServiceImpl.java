@@ -83,7 +83,7 @@ public class WebhookServiceImpl implements WebhookService {
             }
         }
 
-        // --- Business Rule 2: Score Gatekeeper (Grammar & Lexical) ---
+        // --- Business Rule 2: Score Gatekeeper (Grammar, Lexical & Fluency) ---
         BigDecimal grammarScore = payload.grammarScore();
         long grammarEvidenceCount = filteredEvidences.stream()
                 .filter(e -> "GRAMMAR".equalsIgnoreCase(e.criterion()))
@@ -102,9 +102,19 @@ public class WebhookServiceImpl implements WebhookService {
             lexicalScore = BigDecimal.valueOf(7.0);
         }
 
+        BigDecimal fluencyScore = payload.fluencyScore();
+        long fluencyEvidenceCount = filteredEvidences.stream()
+                .filter(e -> "FLUENCY".equalsIgnoreCase(e.criterion()))
+                .count();
+        if (fluencyScore.compareTo(BigDecimal.valueOf(7.0)) < 0 && fluencyEvidenceCount < 2) {
+            log.warn("AI penalized fluency score to {} with only {} evidences. Overriding to 7.0 to protect the learner.", fluencyScore, fluencyEvidenceCount);
+            fluencyScore = BigDecimal.valueOf(7.0);
+        }
+
         // Set the final validated AI sub-scores on the entity
         result.setGrammarScore(grammarScore);
         result.setLexicalScore(lexicalScore);
+        result.setFluencyScore(fluencyScore);
 
         // Calculate and set aiScore after all evidence overriding is completed (Single source of truth)
         BigDecimal sum = result.getPronunciationScore()

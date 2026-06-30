@@ -168,10 +168,56 @@ async def mock_speaking_analyze(
         )
     ]
 
+    # Syntactic Pause Mapping Mock Data
+    word_timestamps = [
+        {"word": "well", "start": 0.0, "end": 0.4},
+        {"word": "however,", "start": 0.5, "end": 1.0},
+        {"word": "I", "start": 2.7, "end": 2.9},    # Pause of 1.7s after discourse marker "however," -> ignored
+        {"word": "went", "start": 3.0, "end": 3.4},
+        {"word": "to", "start": 3.5, "end": 3.8},
+        {"word": "the", "start": 3.9, "end": 4.1},
+        {"word": "zoo", "start": 5.8, "end": 6.2}     # Pause of 1.7s after article "the" -> Unnatural hesitation!
+    ]
+
+    def analyze_fluency_pauses(timestamps: List[dict], initial_score: float) -> tuple[float, List[SpeakingEvidence]]:
+        penalties = 0.0
+        fluency_evidences = []
+        for idx in range(1, len(timestamps)):
+            prev = timestamps[idx - 1]
+            curr = timestamps[idx]
+            pause_duration = curr["start"] - prev["end"]
+            if pause_duration > 1.5:
+                word_before = prev["word"]
+                word_before_clean = word_before.rstrip(".,?!").lower()
+                
+                # Rule 1 & 2: Natural Pause (ignored)
+                if word_before.endswith((".", ",", "?")) or word_before_clean in ['well', 'so', 'however', 'therefore', 'meanwhile', 'furthermore']:
+                    continue
+                
+                # Rule 3: Unnatural Hesitation (penalized)
+                if word_before_clean in ['in', 'on', 'at', 'to', 'for', 'a', 'an', 'the', 'i', 'you', 'he', 'she', 'it']:
+                    penalties += 0.5
+                    quote_text = f"...{word_before} [{pause_duration:.1f}s pause] {curr['word']}..."
+                    fluency_evidences.append(
+                        SpeakingEvidence(
+                            criterion="FLUENCY",
+                            quote=quote_text,
+                            error_type="Unnatural Hesitation",
+                            correction="",
+                            explanation=f"Unnatural pause of {pause_duration:.1f}s after high-risk marker '{word_before}'."
+                        )
+                    )
+        final_score = max(1.0, initial_score - penalties)
+        return final_score, fluency_evidences
+
+    # Evaluate Fluency pauses
+    raw_fluency = round(random.uniform(5.5, 9.0), 1)
+    final_fluency, fluency_evidences = analyze_fluency_pauses(word_timestamps, raw_fluency)
+
     # Pick randomly 1 or 2 items from each pool to test validation overrides in Java backend
     selected_grammar = random.sample(grammar_pool, k=random.choice([1, 2]))
     selected_lexical = random.sample(lexical_pool, k=random.choice([1, 2]))
-    evidences = selected_grammar + selected_lexical
+    evidences = selected_grammar + selected_lexical + fluency_evidences
 
     # Inject static mocked self-corrections list for evaluation gatekeeper testing
     self_corrections = [
@@ -192,7 +238,7 @@ async def mock_speaking_analyze(
     result = SpeakingAnalysisResult(
         session_id=session_id,
         pronunciation_score=round(random.uniform(5.0, 9.0), 1),
-        fluency_score=round(random.uniform(5.0, 9.0), 1),
+        fluency_score=final_fluency,
         lexical_score=round(random.uniform(5.0, 9.0), 1),
         grammar_score=round(random.uniform(5.0, 9.0), 1),
         evidences=evidences,

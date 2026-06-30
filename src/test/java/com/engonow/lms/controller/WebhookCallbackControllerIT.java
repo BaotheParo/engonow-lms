@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -172,37 +173,97 @@ public class WebhookCallbackControllerIT {
     }
 
     @Test
-    public void testHandleWebhook_Success_WithSelfCorrectionFiltering() throws Exception {
+    public void testHandleWebhook_SelfCorrection_OverrideSuccess() throws Exception {
         // Arrange
         MockTestBooking mockBooking = mockTestBookingRepository.findAll().stream()
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("No test booking seeded in the database"));
         String sessionId = mockBooking.getId().toString();
 
-        // Create evidence list containing a self-corrected grammar item
+        // 1 grammar evidence with the quote "Yesterday I go to the zoo"
         List<SpeakingEvidenceDTO> evidences = List.of(
                 new SpeakingEvidenceDTO(
                         "GRAMMAR",
-                        "Yesterday I go to the marketplace with my family", // Contains "I go", which is self-corrected
+                        "Yesterday I go to the zoo",
                         "Verb Tense",
-                        "Yesterday I went to the marketplace with my family",
-                        "Learner used present simple 'go' instead of past simple 'went'."
-                ),
-                new SpeakingEvidenceDTO(
-                        "LEXICAL",
-                        "I want to elevate my IELTS level because it is good",
-                        "Vague Vocabulary",
-                        "I want to improve my IELTS score",
-                        "Replaced generic word."
+                        "Yesterday I went to the zoo",
+                        "Simple past verb tense correct usage."
                 )
         );
 
-        // Self-correction list
+        // self-correction item with original = "I go"
         List<SpeakingWebhookPayload.SpeakingSelfCorrectionDTO> selfCorrections = List.of(
                 new SpeakingWebhookPayload.SpeakingSelfCorrectionDTO(
                         "I go",
                         "sorry",
                         "I went",
+                        "GRAMMAR"
+                )
+        );
+
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.5),
+                BigDecimal.valueOf(8.0),
+                BigDecimal.valueOf(6.0), // Under 7.0, targets override
+                evidences,
+                selfCorrections,
+                "Feedback text"
+        );
+
+        // Act
+        mockMvc.perform(post("/api/v1/callback/ai-grading")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isOk());
+
+        // Assert
+        SpeakingSessionResult savedResult = speakingSessionResultRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new AssertionError("SpeakingSessionResult was not saved to database"));
+
+        // Verify invalid evidence was dropped (evidencesText is empty array "[]")
+        assertEquals("[]", savedResult.getEvidencesText().replaceAll("\\s+", ""));
+
+        // Since grammarEvidenceCount becomes 0, and grammarScore was < 7.0 (6.0), it should be overridden to 7.0
+        assertEquals(0, BigDecimal.valueOf(7.0).compareTo(savedResult.getGrammarScore()));
+    }
+
+    @Test
+    public void testHandleWebhook_RegexBoundary_Trap() throws Exception {
+        // Arrange
+        MockTestBooking mockBooking = mockTestBookingRepository.findAll().stream()
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No test booking seeded in the database"));
+        String sessionId = mockBooking.getId().toString();
+
+        // 2 grammar evidences: one containing substring "earth" and another random one
+        // If regex boundary is correct, "art" will not match "earth", so count remains 2.
+        // Since count is 2 (>= 2), score remains 6.0.
+        // If regex boundary fails, "art" matches "earth", count becomes 1 (< 2), score overridden to 7.0.
+        List<SpeakingEvidenceDTO> evidences = List.of(
+                new SpeakingEvidenceDTO(
+                        "GRAMMAR",
+                        "The earth is flat",
+                        "General Assertion",
+                        "The earth is round",
+                        "Correction suggestion."
+                ),
+                new SpeakingEvidenceDTO(
+                        "GRAMMAR",
+                        "He do not like study",
+                        "S-V Agreement",
+                        "He does not like studying",
+                        "Correction suggestion."
+                )
+        );
+
+        // self-correction item with original = "art"
+        List<SpeakingWebhookPayload.SpeakingSelfCorrectionDTO> selfCorrections = List.of(
+                new SpeakingWebhookPayload.SpeakingSelfCorrectionDTO(
+                        "art",
+                        "no",
+                        "earth",
                         "GRAMMAR"
                 )
         );
@@ -228,14 +289,120 @@ public class WebhookCallbackControllerIT {
         SpeakingSessionResult savedResult = speakingSessionResultRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new AssertionError("SpeakingSessionResult was not saved to database"));
 
-        // Grammar evidence with quote containing "I go" should be dropped.
-        // Therefore, grammarEvidenceCount goes from 1 down to 0.
-        // Since grammarEvidenceCount < 2 and score < 7.0, it triggers override to 7.0!
-        assertEquals(0, BigDecimal.valueOf(7.0).compareTo(savedResult.getGrammarScore()));
+        // Verify the evidence was NOT dropped (it should be present in evidencesText)
+        assertTrue(savedResult.getEvidencesText().contains("The earth is flat"));
+        assertTrue(savedResult.getEvidencesText().contains("He do not like study"));
 
-        // Check that self_corrections_text is correctly serialized to JSON in the database
+        // Verify grammar score is NOT overridden and remains 6.0 because count is still 2
+        assertEquals(0, BigDecimal.valueOf(6.0).compareTo(savedResult.getGrammarScore()));
+    }
+
+    @Test
+    public void testHandleWebhook_DataSegregation_Integrity() throws Exception {
+        // Arrange
+        MockTestBooking mockBooking = mockTestBookingRepository.findAll().stream()
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No test booking seeded in the database"));
+        String sessionId = mockBooking.getId().toString();
+
+        List<SpeakingEvidenceDTO> evidences = List.of(
+                new SpeakingEvidenceDTO(
+                        "GRAMMAR",
+                        "Yesterday I go to the zoo",
+                        "Verb Tense",
+                        "Yesterday I went to the zoo",
+                        "Past simple usage."
+                )
+        );
+
+        List<SpeakingWebhookPayload.SpeakingSelfCorrectionDTO> selfCorrections = List.of(
+                new SpeakingWebhookPayload.SpeakingSelfCorrectionDTO(
+                        "I go",
+                        "sorry",
+                        "I went",
+                        "GRAMMAR"
+                )
+        );
+
+        String originalFeedback = "Highly detailed holistic feedback text summarizing student progress.";
+
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.5),
+                BigDecimal.valueOf(8.0),
+                BigDecimal.valueOf(6.0),
+                evidences,
+                selfCorrections,
+                originalFeedback
+        );
+
+        // Act
+        mockMvc.perform(post("/api/v1/callback/ai-grading")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isOk());
+
+        // Assert
+        SpeakingSessionResult savedResult = speakingSessionResultRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new AssertionError("SpeakingSessionResult was not saved to database"));
+
+        // Assert feedbackText is unchanged and matches original holistic text
+        assertEquals(originalFeedback, savedResult.getFeedbackText());
+
+        // Assert selfCorrectionsText is populated and matches JSON structure
+        assertNotNull(savedResult.getSelfCorrectionsText());
         assertTrue(savedResult.getSelfCorrectionsText().contains("I go"));
-        assertTrue(savedResult.getSelfCorrectionsText().contains("sorry"));
-        assertTrue(savedResult.getSelfCorrectionsText().contains("I went"));
+
+        // Assert evidencesText is populated
+        assertNotNull(savedResult.getEvidencesText());
+        assertEquals("[]", savedResult.getEvidencesText().replaceAll("\\s+", "")); // dropped due to filtering happy path
+    }
+
+    @Test
+    public void testHandleWebhook_FluencyPauseMapping_GatekeeperOverride_Success() throws Exception {
+        // Arrange
+        MockTestBooking mockBooking = mockTestBookingRepository.findAll().stream()
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No test booking seeded in the database"));
+        String sessionId = mockBooking.getId().toString();
+
+        // 1 fluency evidence
+        List<SpeakingEvidenceDTO> evidences = List.of(
+                new SpeakingEvidenceDTO(
+                        "FLUENCY",
+                        "...the [1.7s pause] zoo...",
+                        "Unnatural Hesitation",
+                        "",
+                        "Unnatural pause of 1.7s after article 'the'."
+                )
+        );
+
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7.0), // Pronunciation
+                BigDecimal.valueOf(6.0), // Fluency: Under 7.0, triggers override
+                BigDecimal.valueOf(7.0), // Lexical
+                BigDecimal.valueOf(7.0), // Grammar
+                evidences,
+                Collections.emptyList(),
+                "Feedback text"
+        );
+
+        // Act
+        mockMvc.perform(post("/api/v1/callback/ai-grading")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isOk());
+
+        // Assert
+        SpeakingSessionResult savedResult = speakingSessionResultRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new AssertionError("SpeakingSessionResult was not saved to database"));
+
+        // Fluency score should be overridden to 7.0 from 6.0
+        assertEquals(0, BigDecimal.valueOf(7.0).compareTo(savedResult.getFluencyScore()));
+
+        // Corrected average AI score = (7.0 + 7.0 + 7.0 + 7.0) / 4 = 7.00
+        assertEquals(0, BigDecimal.valueOf(7.00).compareTo(savedResult.getAiScore()));
     }
 }
