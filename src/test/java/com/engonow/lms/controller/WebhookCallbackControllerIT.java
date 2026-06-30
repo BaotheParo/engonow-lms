@@ -373,8 +373,8 @@ public class WebhookCallbackControllerIT {
                         "FLUENCY",
                         "...the [1.7s pause] zoo...",
                         "Unnatural Hesitation",
-                        "",
-                        "Unnatural pause of 1.7s after article 'the'."
+                        "Avoid pausing mid-sentence after grammatical markers.",
+                        "Student demonstrated a 1.7-second breakdown."
                 )
         );
 

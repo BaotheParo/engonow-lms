@@ -84,7 +84,7 @@ public class WebhookServiceImpl implements WebhookService {
         }
 
         // --- Business Rule 2: Score Gatekeeper (Grammar, Lexical & Fluency) ---
-        BigDecimal grammarScore = payload.grammarScore();
+        BigDecimal grammarScore = payload.grammarScore() != null ? payload.grammarScore().setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO;
         long grammarEvidenceCount = filteredEvidences.stream()
                 .filter(e -> "GRAMMAR".equalsIgnoreCase(e.criterion()))
                 .count();
@@ -93,7 +93,7 @@ public class WebhookServiceImpl implements WebhookService {
             grammarScore = BigDecimal.valueOf(7.0);
         }
 
-        BigDecimal lexicalScore = payload.lexicalScore();
+        BigDecimal lexicalScore = payload.lexicalScore() != null ? payload.lexicalScore().setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO;
         long lexicalEvidenceCount = filteredEvidences.stream()
                 .filter(e -> "LEXICAL".equalsIgnoreCase(e.criterion()))
                 .count();
@@ -102,10 +102,13 @@ public class WebhookServiceImpl implements WebhookService {
             lexicalScore = BigDecimal.valueOf(7.0);
         }
 
-        BigDecimal fluencyScore = payload.fluencyScore();
-        long fluencyEvidenceCount = filteredEvidences.stream()
-                .filter(e -> "FLUENCY".equalsIgnoreCase(e.criterion()))
-                .count();
+        BigDecimal fluencyScore = payload.fluencyScore() != null ? payload.fluencyScore().setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        long fluencyEvidenceCount = 0L;
+        if (payload.evidences() != null) {
+            fluencyEvidenceCount = payload.evidences().stream()
+                    .filter(e -> e != null && "FLUENCY".equalsIgnoreCase(e.criterion()))
+                    .count();
+        }
         if (fluencyScore.compareTo(BigDecimal.valueOf(7.0)) < 0 && fluencyEvidenceCount < 2) {
             log.warn("AI penalized fluency score to {} with only {} evidences. Overriding to 7.0 to protect the learner.", fluencyScore, fluencyEvidenceCount);
             fluencyScore = BigDecimal.valueOf(7.0);
@@ -117,7 +120,11 @@ public class WebhookServiceImpl implements WebhookService {
         result.setFluencyScore(fluencyScore);
 
         // Calculate and set aiScore after all evidence overriding is completed (Single source of truth)
-        BigDecimal sum = result.getPronunciationScore()
+        BigDecimal safePronunciation = java.util.Optional.ofNullable(result.getPronunciationScore())
+                .map(score -> score.setScale(1, RoundingMode.HALF_UP))
+                .orElse(BigDecimal.ZERO);
+
+        BigDecimal sum = safePronunciation
                 .add(result.getFluencyScore())
                 .add(result.getLexicalScore())
                 .add(result.getGrammarScore());

@@ -37,9 +37,9 @@ class OmrAnswer(BaseModel):
 
 
 class SpeakingEvidence(BaseModel):
-    criterion: str = Field(..., description="Evaluation criterion: GRAMMAR or LEXICAL")
+    criterion: str = Field(..., description="Evaluation criterion: GRAMMAR, LEXICAL, or FLUENCY")
     quote: str = Field(..., description="Exact quote of student spoken utterance containing error/example")
-    error_type: str = Field(..., description="Categorised error type (e.g. Verb Tense, Vague Vocabulary)")
+    error_type: str = Field(..., description="Categorised error type (e.g. Verb Tense, Vague Vocabulary, Unnatural Hesitation)")
     correction: str = Field(..., description="Suggested correction for the student's quote")
     explanation: str = Field(..., description="Detailed explanation of the error and correction")
 
@@ -57,7 +57,7 @@ class SpeakingAnalysisResult(BaseModel):
     fluency_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Fluency & Coherence band (1.0–9.0)")
     lexical_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Lexical Resource band (1.0–9.0)")
     grammar_score: float = Field(..., ge=1.0, le=9.0, description="IELTS Grammatical Range & Accuracy band (1.0–9.0)")
-    evidences: List[SpeakingEvidence] = Field(default=[], description="Nested evidence list supporting the lexical and grammar bands")
+    evidences: List[SpeakingEvidence] = Field(default=[], description="Nested evidence list supporting the lexical, grammar, and fluency bands")
     self_corrections: List[SelfCorrection] = Field(default=[], description="List of self-corrections detected in student response")
     feedback_text: str = Field(..., description="AI-generated student feedback summary")
 
@@ -203,11 +203,12 @@ async def mock_speaking_analyze(
                             criterion="FLUENCY",
                             quote=quote_text,
                             error_type="Unnatural Hesitation",
-                            correction="",
-                            explanation=f"Unnatural pause of {pause_duration:.1f}s after high-risk marker '{word_before}'."
+                            correction="Avoid pausing mid-sentence after grammatical markers.",
+                            explanation=f"Student demonstrated a {pause_duration:.1f}-second breakdown."
                         )
                     )
         final_score = max(1.0, initial_score - penalties)
+        final_score = round(final_score, 1)
         return final_score, fluency_evidences
 
     # Evaluate Fluency pauses
