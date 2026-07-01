@@ -58,6 +58,8 @@ public class WebhookCallbackControllerIT {
         List<SpeakingEvidenceDTO> evidences = List.of(
                 new SpeakingEvidenceDTO(
                         "GRAMMAR",
+                        "PART_1",
+                        "Sample Question",
                         "Yesterday I go to the marketplace with my family",
                         "Verb Tense",
                         "Yesterday I went to the marketplace with my family",
@@ -184,6 +186,8 @@ public class WebhookCallbackControllerIT {
         List<SpeakingEvidenceDTO> evidences = List.of(
                 new SpeakingEvidenceDTO(
                         "GRAMMAR",
+                        "PART_1",
+                        "Sample Question",
                         "Yesterday I go to the zoo",
                         "Verb Tense",
                         "Yesterday I went to the zoo",
@@ -244,6 +248,8 @@ public class WebhookCallbackControllerIT {
         List<SpeakingEvidenceDTO> evidences = List.of(
                 new SpeakingEvidenceDTO(
                         "GRAMMAR",
+                        "PART_1",
+                        "Sample Question",
                         "The earth is flat",
                         "General Assertion",
                         "The earth is round",
@@ -251,6 +257,8 @@ public class WebhookCallbackControllerIT {
                 ),
                 new SpeakingEvidenceDTO(
                         "GRAMMAR",
+                        "PART_1",
+                        "Sample Question",
                         "He do not like study",
                         "S-V Agreement",
                         "He does not like studying",
@@ -308,6 +316,8 @@ public class WebhookCallbackControllerIT {
         List<SpeakingEvidenceDTO> evidences = List.of(
                 new SpeakingEvidenceDTO(
                         "GRAMMAR",
+                        "PART_1",
+                        "Sample Question",
                         "Yesterday I go to the zoo",
                         "Verb Tense",
                         "Yesterday I went to the zoo",
@@ -371,6 +381,8 @@ public class WebhookCallbackControllerIT {
         List<SpeakingEvidenceDTO> evidences = List.of(
                 new SpeakingEvidenceDTO(
                         "FLUENCY",
+                        "PART_1",
+                        "Sample Question",
                         "...the [1.7s pause] zoo...",
                         "Unnatural Hesitation",
                         "Avoid pausing mid-sentence after grammatical markers.",
@@ -402,6 +414,63 @@ public class WebhookCallbackControllerIT {
         // Fluency score should be overridden to 7.0 from 6.0
         assertEquals(0, BigDecimal.valueOf(7.0).compareTo(savedResult.getFluencyScore()));
 
+        // Corrected average AI score = (7.0 + 7.0 + 7.0 + 7.0) / 4 = 7.00
+        assertEquals(0, BigDecimal.valueOf(7.00).compareTo(savedResult.getAiScore()));
+    }
+
+    @Test
+    public void testHandleWebhook_FluencyGatekeeper_Part3_LenientOverride() throws Exception {
+        // Arrange
+        MockTestBooking mockBooking = mockTestBookingRepository.findAll().stream()
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No test booking seeded in the database"));
+        String sessionId = mockBooking.getId().toString();
+
+        // Create exactly TWO FLUENCY evidences. Evidence 1: part = "PART_1". Evidence 2: part = "PART_3".
+        List<SpeakingEvidenceDTO> evidences = List.of(
+                new SpeakingEvidenceDTO(
+                        "FLUENCY",
+                        "PART_1",
+                        "What is your hometown like?",
+                        "...well [1.6s pause] it is...",
+                        "Unnatural Hesitation",
+                        "Avoid pausing mid-sentence after grammatical markers.",
+                        "Student demonstrated a 1.6-second breakdown."
+                ),
+                new SpeakingEvidenceDTO(
+                        "FLUENCY",
+                        "PART_3",
+                        "Why do people live in cities?",
+                        "...because [2.0s pause] of...",
+                        "Unnatural Hesitation",
+                        "Avoid pausing mid-sentence after grammatical markers.",
+                        "Student demonstrated a 2.0-second breakdown."
+                )
+        );
+
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7.0), // Pronunciation
+                BigDecimal.valueOf(6.0), // Fluency: Under 7.0, triggers override since count becomes 1 (< 2) due to PART_3 being ignored
+                BigDecimal.valueOf(7.0), // Lexical
+                BigDecimal.valueOf(7.0), // Grammar
+                evidences,
+                Collections.emptyList(),
+                "Feedback text"
+        );
+
+        // Act
+        mockMvc.perform(post("/api/v1/callback/ai-grading")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isOk());
+
+        // Assert
+        SpeakingSessionResult savedResult = speakingSessionResultRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new AssertionError("SpeakingSessionResult was not saved to database"));
+
+        // Fluency score should be overridden to 7.0 from 6.0 because PART_3 evidence is excluded from gatekeeper count
+        assertEquals(0, BigDecimal.valueOf(7.0).compareTo(savedResult.getFluencyScore()));
         // Corrected average AI score = (7.0 + 7.0 + 7.0 + 7.0) / 4 = 7.00
         assertEquals(0, BigDecimal.valueOf(7.00).compareTo(savedResult.getAiScore()));
     }

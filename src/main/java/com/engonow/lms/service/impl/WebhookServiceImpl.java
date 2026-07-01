@@ -107,6 +107,7 @@ public class WebhookServiceImpl implements WebhookService {
         if (payload.evidences() != null) {
             fluencyEvidenceCount = payload.evidences().stream()
                     .filter(e -> e != null && "FLUENCY".equalsIgnoreCase(e.criterion()))
+                    .filter(e -> !"PART_3".equalsIgnoreCase(e.part()))
                     .count();
         }
         if (fluencyScore.compareTo(BigDecimal.valueOf(7.0)) < 0 && fluencyEvidenceCount < 2) {

@@ -11,7 +11,7 @@ Run: uvicorn mock_ai_services:app --host 0.0.0.0 --port 8001 --reload
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Tuple
 import random
 import uvicorn
 import asyncio
@@ -38,6 +38,8 @@ class OmrAnswer(BaseModel):
 
 class SpeakingEvidence(BaseModel):
     criterion: str = Field(..., description="Evaluation criterion: GRAMMAR, LEXICAL, or FLUENCY")
+    part: str = Field(..., description="IELTS part: PART_1, PART_2, or PART_3")
+    question: str = Field(..., description="Specific question from the examiner")
     quote: str = Field(..., description="Exact quote of student spoken utterance containing error/example")
     error_type: str = Field(..., description="Categorised error type (e.g. Verb Tense, Vague Vocabulary, Unnatural Hesitation)")
     correction: str = Field(..., description="Suggested correction for the student's quote")
@@ -137,6 +139,8 @@ async def mock_speaking_analyze(
     grammar_pool = [
         SpeakingEvidence(
             criterion="GRAMMAR",
+            part="PART_1",
+            question="Describe your hometown.",
             quote="Yesterday I go to the marketplace with my family",
             error_type="Verb Tense",
             correction="Yesterday I went to the marketplace with my family",
@@ -144,6 +148,8 @@ async def mock_speaking_analyze(
         ),
         SpeakingEvidence(
             criterion="GRAMMAR",
+            part="PART_2",
+            question="Describe a book you enjoyed reading.",
             quote="She don't like studying english at night",
             error_type="Subject-Verb Agreement",
             correction="She doesn't like studying English at night",
@@ -154,6 +160,8 @@ async def mock_speaking_analyze(
     lexical_pool = [
         SpeakingEvidence(
             criterion="LEXICAL",
+            part="PART_1",
+            question="What do you do in your free time?",
             quote="I want to elevate my IELTS level because it is good",
             error_type="Vague Vocabulary",
             correction="I want to improve my IELTS score because it is crucial for my career",
@@ -161,6 +169,8 @@ async def mock_speaking_analyze(
         ),
         SpeakingEvidence(
             criterion="LEXICAL",
+            part="PART_2",
+            question="Describe a memorable journey.",
             quote="Studying abroad gives a big chance to learn new things",
             error_type="Collocation Error",
             correction="Studying abroad offers a great opportunity to acquire new knowledge",
@@ -176,12 +186,19 @@ async def mock_speaking_analyze(
         {"word": "went", "start": 3.0, "end": 3.4},
         {"word": "to", "start": 3.5, "end": 3.8},
         {"word": "the", "start": 3.9, "end": 4.1},
-        {"word": "zoo", "start": 5.8, "end": 6.2}     # Pause of 1.7s after article "the" -> Unnatural hesitation!
+        {"word": "zoo", "start": 5.8, "end": 6.2},    # Pause of 1.7s after article "the" -> Unnatural hesitation! (PART_1)
+        {"word": "because", "start": 6.3, "end": 6.8},
+        {"word": "it", "start": 6.9, "end": 7.1},
+        {"word": "is", "start": 7.2, "end": 7.4},
+        {"word": "in", "start": 7.5, "end": 7.7},
+        {"word": "the", "start": 7.8, "end": 8.0},
+        {"word": "city", "start": 10.0, "end": 10.4}  # Pause of 2.0s after article "the" -> Unnatural hesitation! (PART_3)
     ]
 
-    def analyze_fluency_pauses(timestamps: List[dict], initial_score: float) -> tuple[float, List[SpeakingEvidence]]:
+    def analyze_fluency_pauses(timestamps: List[dict], initial_score: float) -> Tuple[float, List[SpeakingEvidence]]:
         penalties = 0.0
         fluency_evidences = []
+        pause_count = 0
         for idx in range(1, len(timestamps)):
             prev = timestamps[idx - 1]
             curr = timestamps[idx]
@@ -198,9 +215,13 @@ async def mock_speaking_analyze(
                 if word_before_clean in ['in', 'on', 'at', 'to', 'for', 'a', 'an', 'the', 'i', 'you', 'he', 'she', 'it']:
                     penalties += 0.5
                     quote_text = f"...{word_before} [{pause_duration:.1f}s pause] {curr['word']}..."
+                    pause_count += 1
+                    part_tag = "PART_1" if pause_count == 1 else "PART_3"
                     fluency_evidences.append(
                         SpeakingEvidence(
                             criterion="FLUENCY",
+                            part=part_tag,
+                            question="What is your favorite place in the city?",
                             quote=quote_text,
                             error_type="Unnatural Hesitation",
                             correction="Avoid pausing mid-sentence after grammatical markers.",
