@@ -9,44 +9,32 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface TutorAvailabilitySlotRepository extends JpaRepository<TutorAvailabilitySlot, Long> {
 
-    /**
-     * Public-facing: list available slots without exposing teacher identity.
-     * Returns only future AVAILABLE slots, ordered chronologically.
-     */
     @Query("""
            SELECT s FROM TutorAvailabilitySlot s
-           WHERE s.status = 'AVAILABLE'
-             AND s.startTime > :now
-           ORDER BY s.startTime ASC
+           WHERE s.slotStatus = 'AVAILABLE'
+             AND s.slotDate >= :today
+           ORDER BY s.slotDate ASC, s.startTime ASC
            """)
-    List<TutorAvailabilitySlot> findPublicAvailableSlots(@Param("now") LocalDateTime now);
+    List<TutorAvailabilitySlot> findPublicAvailableSlots(@Param("today") LocalDate today);
 
-    /**
-     * Used by the booking service. Applies PESSIMISTIC_WRITE lock as a fallback
-     * safety net to complement @Version Optimistic Locking when fetching the slot
-     * right before booking.
-     *
-     * Rationale for PESSIMISTIC_WRITE here alongside @Version:
-     *   - @Version (optimistic) handles the common low-contention case.
-     *   - This @Lock(PESSIMISTIC_WRITE) query is used WITHIN the transaction that
-     *     performs the actual status update, guaranteeing serialization for that
-     *     specific fetch-then-update sequence during the critical booking window.
-     *
-     * This is a "belt-and-suspenders" approach for a mission-critical booking path.
-     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT s FROM TutorAvailabilitySlot s WHERE s.id = :id AND s.status = 'AVAILABLE'")
+    @Query("SELECT s FROM TutorAvailabilitySlot s WHERE s.id = :id AND s.slotStatus = 'AVAILABLE'")
     Optional<TutorAvailabilitySlot> findAvailableByIdForUpdate(@Param("id") Long id);
 
-    List<TutorAvailabilitySlot> findByTeacherIdAndStatus(Long teacherId, SlotStatus status);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM TutorAvailabilitySlot s WHERE s.id = :id")
+    Optional<TutorAvailabilitySlot> findByIdForUpdate(@Param("id") Long id);
 
-    List<TutorAvailabilitySlot> findByTeacherIdAndStartTimeBetween(
-        Long teacherId, LocalDateTime from, LocalDateTime to);
+    List<TutorAvailabilitySlot> findByTutorIdAndSlotStatus(Long tutorId, SlotStatus slotStatus);
+
+    List<TutorAvailabilitySlot> findByTutorIdAndSlotDateAndStartTimeBetween(
+        Long tutorId, LocalDate slotDate, LocalTime from, LocalTime to);
 }

@@ -35,6 +35,7 @@ import java.util.Set;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@com.fasterxml.jackson.annotation.JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class User extends BaseEntity {
 
     @Id
@@ -51,6 +52,7 @@ public class User extends BaseEntity {
      * BCrypt-hashed password. Never expose this field in DTOs.
      */
     @Column(name = "password", nullable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String password;
 
     @Column(name = "full_name", nullable = false, length = 150)
@@ -75,6 +77,7 @@ public class User extends BaseEntity {
         inverseJoinColumns = @JoinColumn(name = "role_id",  referencedColumnName = "id")
     )
     @Builder.Default
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Set<Role> roles = new HashSet<>();
 
     // ── Helper Methods ────────────────────────────────────────────────────

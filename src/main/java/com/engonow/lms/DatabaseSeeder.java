@@ -100,11 +100,11 @@ public class DatabaseSeeder {
 
         // 3. Slot
         TutorAvailabilitySlot slot = TutorAvailabilitySlot.builder()
-                .teacher(teacher)
-                .startTime(LocalDateTime.now().plusDays(1))
-                .endTime(LocalDateTime.now().plusDays(1).plusHours(1))
-                .status(SlotStatus.BOOKED)
-                .notes("Slot for speaking practice")
+                .tutor(teacher)
+                .slotDate(java.time.LocalDate.now().plusDays(1))
+                .startTime(java.time.LocalTime.now().plusHours(1))
+                .endTime(java.time.LocalTime.now().plusHours(2))
+                .slotStatus(SlotStatus.BOOKED)
                 .build();
         slot = slotRepository.save(slot);
 
@@ -112,8 +112,8 @@ public class DatabaseSeeder {
         MockTestBooking booking = MockTestBooking.builder()
                 .student(student)
                 .slot(slot)
-                .status(BookingStatus.CONFIRMED)
-                .studentNotes("I want to practice Part 2 feedback.")
+                .bookingStatus(BookingStatus.CONFIRMED)
+                .notes("I want to practice Part 2 feedback.")
                 .build();
         booking = bookingRepository.save(booking);
 

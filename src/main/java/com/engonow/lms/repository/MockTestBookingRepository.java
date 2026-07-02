@@ -13,15 +13,14 @@ import java.util.Optional;
 @Repository
 public interface MockTestBookingRepository extends JpaRepository<MockTestBooking, Long> {
 
-    /**
-     * JOIN FETCH student + slot + teacher in a single query.
-     * Used when loading booking detail for email confirmation.
-     */
+    @Query("SELECT b FROM MockTestBooking b WHERE b.student.id = :studentId")
+    List<MockTestBooking> findByStudentId(@Param("studentId") Long studentId);
+
     @Query("""
            SELECT b FROM MockTestBooking b
            JOIN FETCH b.student s
            JOIN FETCH b.slot sl
-           JOIN FETCH sl.teacher t
+           JOIN FETCH sl.tutor t
            WHERE b.id = :bookingId
            """)
     Optional<MockTestBooking> findByIdWithDetails(@Param("bookingId") Long bookingId);
@@ -34,5 +33,5 @@ public interface MockTestBookingRepository extends JpaRepository<MockTestBooking
            """)
     List<MockTestBooking> findByStudentIdWithSlots(@Param("studentId") Long studentId);
 
-    boolean existsBySlotIdAndStatus(Long slotId, BookingStatus status);
+    boolean existsBySlotIdAndBookingStatus(Long slotId, BookingStatus bookingStatus);
 }
