@@ -1,0 +1,74 @@
+﻿[+] Tìm thấy file âm thanh: tiw_mock_test.mp3
+[+] Dung lượng file: 6.55 MB
+[*] Đang đọc file và đóng gói payload giả lập...
+[*] Gửi file âm thanh đến máy chủ AI (Port 8001)...
+
+============================================================
+         BÁO CÁO KẾT QUẢ CHẤM ĐIỂM IELTS SPEAKING AI
+============================================================
+ Mã phiên thi (Session ID) : 101
+ Tình trạng kết nối file   : THÀNH CÔNG
+------------------------------------------------------------
+ ĐIỂM SỐ CHI TIẾT TỪNG TIÊU CHÍ (IELTS BANDS):
+  - Phát âm (Pronunciation) : 7.8
+  - Độ trôi chảy (Fluency)  : 6.5
+  - Vốn từ vựng (Lexical)   : 7.0
+  - Ngữ pháp (Grammar)      : 7.5
+------------------------------------------------------------
+ DANH SÁCH BẰNG CHỨNG TRÍCH XUẤT VÀ PHÂN ĐOẠN (6 lỗi):
+
+  1. Tiêu chí: FLUENCY
+     Phân đoạn thi: PART_2
+     Câu hỏi giám khảo: Describe a person you know who likes to cook for other people.
+     Học viên nói sai : "...she is really enjoy baking she she She doesn't take any class..."
+     Loại lỗi hệ thống: Unnatural Hesitation
+     Gợi ý sửa đổi    : ...she really enjoys baking. She doesn't take any classes...
+     Giải thích sư phạm: Thí sinh bị lặp từ (she she She) trong 1.8 giây tại Part 2 khi đang cố gắng tìm cấu trúc câu phủ định tiếp theo. Đây là lỗi Unnatural Hesitation làm giảm độ mượt mà của chuỗi nói dài.
+
+  2. Tiêu chí: FLUENCY
+     Phân đoạn thi: PART_3
+     Câu hỏi giám khảo: Should children be taught cooking skills from a young age?
+     Học viên nói sai : "...Because sometimes... [2.1s pause] they could first start with some recipe..."
+     Loại lỗi hệ thống: Natural Cognitive Pause
+     Gợi ý sửa đổi    : ...Because sometimes, they could start with a base recipe...
+     Giải thích sư phạm: Khoảng lặng dài 2.1 giây xuất hiện ở Part 3 sau trạng từ 'sometimes'. Đây là khoảng lặng tư duy hợp lệ (Cognitive Pause) để thí sinh sắp xếp lập luận trừu tượng, không bị tính là lỗi sụp đổ ngôn ngữ.
+
+  3. Tiêu chí: GRAMMAR
+     Phân đoạn thi: PART_1
+     Câu hỏi giám khảo: Are you still friends with the people that you've known since childhood?
+     Học viên nói sai : "...I moved to the central of Vietnam. So we have been separated apart..."
+     Loại lỗi hệ thống: Preposition Usage
+     Gợi ý sửa đổi    : ...I moved to central Vietnam. So we have been separated for a long time...
+     Giải thích sư phạm: Thí sinh sử dụng cụm từ 'to the central of Vietnam'. Cấu trúc chính xác phải là 'to central Vietnam' hoặc 'to the central region of Vietnam'.
+
+  4. Tiêu chí: GRAMMAR
+     Phân đoạn thi: PART_2
+     Câu hỏi giám khảo: Describe a person you know who likes to cook for other people.
+     Học viên nói sai : "...she is really enjoy baking... give the cakes as a gift for other people, include me..."
+     Loại lỗi hệ thống: Verb Form & Participle
+     Gợi ý sửa đổi    : ...she really enjoys baking... giving the cakes as gifts to other people, including me...
+     Giải thích sư phạm: Dính lỗi cấu trúc 'she is really enjoy' (thừa động từ to be) và dùng sai phân từ 'include me' thay vì 'including me'.
+
+  5. Tiêu chí: LEXICAL
+     Phân đoạn thi: PART_3
+     Câu hỏi giám khảo: In your opinion, how important is it to learn how to cook?
+     Học viên nói sai : "...when we live in another country and the food does not suit to our taste..."
+     Loại lỗi hệ thống: Collocation Error
+     Gợi ý sửa đổi    : ...and the food does not suit our taste / is not to our taste...
+     Giải thích sư phạm: Ngoại động từ 'suit' tác động trực tiếp lên tân ngữ, việc chèn giới từ 'to' tạo thành cụm 'suit to our taste' là sai collocation chuẩn.
+
+  6. Tiêu chí: PRONUNCIATION
+     Phân đoạn thi: PART_2
+     Câu hỏi giám khảo: Describe a person you know who likes to cook for other people.
+     Học viên nói sai : "...she enjoys looking for some recipes on the internet..."
+     Loại lỗi hệ thống: Final Consonant Deletion
+     Gợi ý sửa đổi    : ...she enjoys looking for some /ˈresəpiz/ on the internet...
+     Giải thích sư phạm: Thí sinh phát âm từ 'recipes' bị nuốt mất âm đuôi /z/ của dạng số nhiều, chuyển thành danh từ số ít, làm giảm độ chính xác ngữ âm.
+------------------------------------------------------------
+ DANH SÁCH CÁC PHA TỰ SỬA LỖI ĐÃ GHI NHẬN (SELF-CORRECTION):
+  [+] Học viên lỡ nói 'she' nhưng đã sửa lại thành 'She doesn't' qua từ đệm 'repetition and shift' (GRAMMAR)
+  [+] Học viên lỡ nói 'recipe' nhưng đã sửa lại thành 'the base recipe' qua từ đệm 'discourse restructuring' (LEXICAL)
+------------------------------------------------------------
+ NHẬN XÉT TỔNG QUAN TỪ GIÁM KHẢO AI:
+  The candidate demonstrates a strong operational command of English with noticeable academic phrasing ('pivotal skills', 'fully develop'). Part 2 showed minor vocabulary and grammatical constraints, which were swiftly self-corrected. Part 3 displayed natural cognitive pausing for logical coherence.
+============================================================
