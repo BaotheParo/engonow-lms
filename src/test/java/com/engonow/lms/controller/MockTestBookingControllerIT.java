@@ -25,8 +25,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -55,12 +57,10 @@ public class MockTestBookingControllerIT {
 
     @BeforeEach
     public void setUp() {
-        // Clean state
         bookingRepository.deleteAllInBatch();
         slotRepository.deleteAllInBatch();
         userRepository.deleteAllInBatch();
 
-        // Create Users
         tutor = User.builder()
                 .username("tutor_test")
                 .email("tutor_test@engonow.com")
@@ -81,7 +81,6 @@ public class MockTestBookingControllerIT {
                 .build();
         student = userRepository.save(student);
 
-        // Create Available Slot
         availableSlot = TutorAvailabilitySlot.builder()
                 .tutor(tutor)
                 .slotDate(LocalDate.now().plusDays(2))
@@ -91,7 +90,6 @@ public class MockTestBookingControllerIT {
                 .build();
         availableSlot = slotRepository.save(availableSlot);
 
-        // Create Booked Slot
         bookedSlot = TutorAvailabilitySlot.builder()
                 .tutor(tutor)
                 .slotDate(LocalDate.now().plusDays(2))
@@ -120,7 +118,8 @@ public class MockTestBookingControllerIT {
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(requestDTO)))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$").value("Booking request initiated successfully"));
 
         // Verify slot state transition
         TutorAvailabilitySlot updatedSlot = slotRepository.findById(availableSlot.getId())
@@ -147,7 +146,11 @@ public class MockTestBookingControllerIT {
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(requestDTO)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("The selected slot is no longer available for booking"))
+                .andExpect(jsonPath("$.path").value("/api/v1/bookings"));
 
         // Verify slot state remains unchanged
         TutorAvailabilitySlot updatedSlot = slotRepository.findById(bookedSlot.getId())
@@ -157,6 +160,42 @@ public class MockTestBookingControllerIT {
         // Verify no booking was created
         List<MockTestBooking> bookings = bookingRepository.findByStudentId(student.getId());
         assertTrue(bookings.isEmpty());
+    }
+
+    @Test
+    public void testCreateBooking_UnseededSlotId() throws Exception {
+        BookingRequestDTO requestDTO = new BookingRequestDTO(
+                99999L,
+                student.getId(),
+                "Attempting to book a non-existent slot."
+        );
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(requestDTO)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("Target tutor availability slot not found"))
+                .andExpect(jsonPath("$.path").value("/api/v1/bookings"));
+    }
+
+    @Test
+    public void testCreateBooking_ValidationError() throws Exception {
+        BookingRequestDTO requestDTO = new BookingRequestDTO(
+                null,
+                student.getId(),
+                "Attempting to send null slot ID."
+        );
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(requestDTO)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("Slot ID must not be null"))
+                .andExpect(jsonPath("$.path").value("/api/v1/bookings"));
     }
 
     @Test

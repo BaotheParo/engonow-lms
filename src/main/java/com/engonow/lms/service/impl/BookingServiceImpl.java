@@ -12,40 +12,47 @@ import com.engonow.lms.repository.TutorAvailabilitySlotRepository;
 import com.engonow.lms.repository.UserRepository;
 import com.engonow.lms.service.BookingService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class BookingServiceImpl implements BookingService {
 
-    private final TutorAvailabilitySlotRepository slotRepository;
-    private final MockTestBookingRepository bookingRepository;
+    private final MockTestBookingRepository mockTestBookingRepository;
+    private final TutorAvailabilitySlotRepository tutorAvailabilitySlotRepository;
     private final UserRepository userRepository;
 
     @Override
     @Transactional
-    public MockTestBooking createBooking(BookingRequestDTO requestDTO) {
-        TutorAvailabilitySlot slot = slotRepository.findByIdForUpdate(requestDTO.slotId())
-                .orElseThrow(() -> new IllegalArgumentException("TutorAvailabilitySlot not found for ID: " + requestDTO.slotId()));
+    public void createBooking(BookingRequestDTO dto) {
+        log.info("Initiating booking process for slot ID: {} and student ID: {}", dto.slotId(), dto.studentId());
+
+        TutorAvailabilitySlot slot = tutorAvailabilitySlotRepository.findByIdForUpdate(dto.slotId())
+                .orElseThrow(() -> new IllegalArgumentException("Target tutor availability slot not found"));
 
         if (slot.getSlotStatus() != SlotStatus.AVAILABLE) {
-            throw new SlotNotAvailableException("Slot is not available: " + requestDTO.slotId());
+            log.warn("Booking failed: Tutor availability slot {} status is {}", dto.slotId(), slot.getSlotStatus());
+            throw new SlotNotAvailableException("The selected slot is no longer available for booking");
         }
 
-        User student = userRepository.findById(requestDTO.studentId())
-                .orElseThrow(() -> new IllegalArgumentException("User not found for ID: " + requestDTO.studentId()));
+        User student = userRepository.findById(dto.studentId())
+                .orElseThrow(() -> new IllegalArgumentException("Student user entity not found"));
 
         slot.setSlotStatus(SlotStatus.BOOKED);
-        slotRepository.save(slot);
+        tutorAvailabilitySlotRepository.save(slot);
 
         MockTestBooking booking = MockTestBooking.builder()
                 .student(student)
                 .slot(slot)
                 .bookingStatus(BookingStatus.CONFIRMED)
-                .notes(requestDTO.notes())
+                .notes(dto.notes())
                 .build();
 
-        return bookingRepository.save(booking);
+        mockTestBookingRepository.save(booking);
+
+        log.info("Successfully created booking for slot ID: {} and student ID: {}", dto.slotId(), dto.studentId());
     }
 }
