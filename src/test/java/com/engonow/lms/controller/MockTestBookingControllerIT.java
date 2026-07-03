@@ -120,7 +120,7 @@ public class MockTestBookingControllerIT {
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(requestDTO)))
-                .andExpect(status().isOk());
+                .andExpect(status().isCreated());
 
         // Verify slot state transition
         TutorAvailabilitySlot updatedSlot = slotRepository.findById(availableSlot.getId())
@@ -214,7 +214,7 @@ public class MockTestBookingControllerIT {
 
         for (Future<Integer> future : futures) {
             int status = future.get();
-            if (status == 200) {
+            if (status == 201) {
                 successCount++;
             } else if (status == 400 || status == 409) {
                 failureCount++;

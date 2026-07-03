@@ -3,6 +3,8 @@ package com.engonow.lms.repository;
 import com.engonow.lms.entity.TutorAvailabilitySlot;
 import com.engonow.lms.enums.SlotStatus;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -37,4 +39,18 @@ public interface TutorAvailabilitySlotRepository extends JpaRepository<TutorAvai
 
     List<TutorAvailabilitySlot> findByTutorIdAndSlotDateAndStartTimeBetween(
         Long tutorId, LocalDate slotDate, LocalTime from, LocalTime to);
+
+    @Query("""
+           SELECT s FROM TutorAvailabilitySlot s
+           WHERE s.slotStatus = 'AVAILABLE'
+             AND (:tutorId IS NULL OR s.tutor.id = :tutorId)
+             AND (:startDate IS NULL OR s.slotDate >= :startDate)
+             AND (:endDate IS NULL OR s.slotDate <= :endDate)
+           """)
+    Page<TutorAvailabilitySlot> findAvailableSlots(
+        @Param("tutorId") Long tutorId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        Pageable pageable
+    );
 }
