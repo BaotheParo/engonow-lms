@@ -115,10 +115,67 @@ public class WebhookServiceImpl implements WebhookService {
             fluencyScore = BigDecimal.valueOf(7.0);
         }
 
+        BigDecimal pronunciationScore = payload.pronunciationScore() != null ? payload.pronunciationScore() : BigDecimal.ZERO;
+
+        // --- PHASE 1: DATA NORMALIZATION & FLOOR CAP ---
+        pronunciationScore = pronunciationScore.setScale(0, RoundingMode.HALF_UP);
+        fluencyScore = fluencyScore.setScale(0, RoundingMode.HALF_UP);
+        lexicalScore = lexicalScore.setScale(0, RoundingMode.HALF_UP);
+        grammarScore = grammarScore.setScale(0, RoundingMode.HALF_UP);
+
+        boolean isFloorCapTriggered = false;
+        BigDecimal minCriterion = pronunciationScore.min(fluencyScore).min(lexicalScore).min(grammarScore);
+        if (minCriterion.compareTo(BigDecimal.valueOf(5)) < 0) {
+            isFloorCapTriggered = true;
+            log.warn("[GATEKEEPER - CRITICAL FLOOR CAP] Detected a critical breakdown in criteria. Min score is {}. The final holistic band score will be capped at 5.5.", minCriterion);
+        }
+        // --- END OF PHASE 1 ---
+
+        // ─── PHASE 2: CROSS-SKILL PENALTIES ───
+        // 1. PILLAR II: ASYMMETRY PENALTY (Luật Phạt Lệch Trần)
+        BigDecimal maxCriterion = pronunciationScore.max(fluencyScore).max(lexicalScore).max(grammarScore);
+        BigDecimal scoreDelta = maxCriterion.subtract(minCriterion);
+        if (scoreDelta.compareTo(BigDecimal.valueOf(2)) > 0) {
+            BigDecimal allowedMax = minCriterion.add(BigDecimal.valueOf(2));
+            if (pronunciationScore.compareTo(allowedMax) > 0) {
+                pronunciationScore = allowedMax;
+            }
+            if (fluencyScore.compareTo(allowedMax) > 0) {
+                fluencyScore = allowedMax;
+            }
+            if (lexicalScore.compareTo(allowedMax) > 0) {
+                lexicalScore = allowedMax;
+            }
+            if (grammarScore.compareTo(allowedMax) > 0) {
+                grammarScore = allowedMax;
+            }
+            log.warn("[GATEKEEPER - ASYMMETRY PENALTY] Detected extreme score variance (Delta = {}). Capping outlier high scores to allowed maximum: {}", scoreDelta, allowedMax);
+        }
+
+        // 2. PILLAR III: CROSS-SKILL GRAVITY PULL (Luật Bù Trừ Kỹ Năng)
+        // Rule 3A (Grammar drags down Fluency)
+        if (grammarScore.compareTo(BigDecimal.valueOf(4)) <= 0) {
+            BigDecimal fcLimit = grammarScore.add(BigDecimal.valueOf(2));
+            if (fluencyScore.compareTo(fcLimit) > 0) {
+                fluencyScore = fcLimit;
+                log.warn("[GATEKEEPER - COHERENCE BOUNDARY] Broken grammar (GRA <= 4) naturally degrades fluency. Capping FC score to: {}", fcLimit);
+            }
+        }
+
+        // Rule 3B (Unintelligible Pronunciation isolates Lexical Resource)
+        if (pronunciationScore.compareTo(BigDecimal.valueOf(4)) <= 0) {
+            if (lexicalScore.compareTo(BigDecimal.valueOf(5)) > 0) {
+                lexicalScore = BigDecimal.valueOf(5);
+                log.warn("[GATEKEEPER - LEXICAL ISOLATION] Unintelligible pronunciation (PR <= 4) voids advanced vocabulary. Capping LR score to 5.");
+            }
+        }
+        // ─── END OF PHASE 2 ───
+
         // Set the final validated AI sub-scores on the entity
         result.setGrammarScore(grammarScore);
         result.setLexicalScore(lexicalScore);
         result.setFluencyScore(fluencyScore);
+        result.setPronunciationScore(pronunciationScore);
 
         // Calculate and set aiScore after all evidence overriding is completed (Single source of truth)
         BigDecimal safePronunciation = java.util.Optional.ofNullable(result.getPronunciationScore())
