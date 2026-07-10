@@ -177,17 +177,32 @@ public class WebhookServiceImpl implements WebhookService {
         result.setFluencyScore(fluencyScore);
         result.setPronunciationScore(pronunciationScore);
 
-        // Calculate and set aiScore after all evidence overriding is completed (Single source of truth)
-        BigDecimal safePronunciation = java.util.Optional.ofNullable(result.getPronunciationScore())
-                .map(score -> score.setScale(1, RoundingMode.HALF_UP))
-                .orElse(BigDecimal.ZERO);
+        // ─── PHASE 3: OFFICIAL CAMBRIDGE ROUNDING ───
+        BigDecimal sum = pronunciationScore.add(fluencyScore).add(lexicalScore).add(grammarScore);
+        BigDecimal rawAverage = sum.divide(BigDecimal.valueOf(4), 3, RoundingMode.HALF_UP);
 
-        BigDecimal sum = safePronunciation
-                .add(result.getFluencyScore())
-                .add(result.getLexicalScore())
-                .add(result.getGrammarScore());
-        BigDecimal correctedAiScore = sum.divide(BigDecimal.valueOf(4), 2, RoundingMode.HALF_UP);
-        result.setAiScore(correctedAiScore);
+        double val = rawAverage.doubleValue();
+        double floor = Math.floor(val);
+        double remainder = val - floor;
+        double roundedValue;
+        if (remainder < 0.25) {
+            roundedValue = floor;
+        } else if (remainder >= 0.25 && remainder < 0.75) {
+            roundedValue = floor + 0.5;
+        } else {
+            roundedValue = floor + 1.0;
+        }
+        BigDecimal finalScore = BigDecimal.valueOf(roundedValue).setScale(1, RoundingMode.HALF_UP);
+
+        if (isFloorCapTriggered) {
+            finalScore = finalScore.min(BigDecimal.valueOf(5.5));
+            log.info("[GATEKEEPER] Floor Cap applied. Raw Average: {} -> Final Capped Band: {}", rawAverage, finalScore);
+        } else {
+            log.info("[GATEKEEPER] Holistic Cambridge Rounding applied. Raw Average: {} -> Final Band: {}", rawAverage, finalScore);
+        }
+
+        result.setAiScore(finalScore);
+        // ─── END OF PHASE 3 ───
 
         // --- Business Rule 3: DB Persistence of Self-Corrections & Evidences ---
         String selfCorrectionsJson = "[]";
