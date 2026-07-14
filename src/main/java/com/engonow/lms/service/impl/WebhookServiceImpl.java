@@ -123,14 +123,19 @@ public class WebhookServiceImpl implements WebhookService {
         lexicalScore = lexicalScore.setScale(0, RoundingMode.HALF_UP);
         grammarScore = grammarScore.setScale(0, RoundingMode.HALF_UP);
 
+        // DEFERRED PER CTO DIRECTIVE: IELTS criteria are graded independently without cross-skill penalization.
+        /*
         boolean isFloorCapTriggered = false;
         BigDecimal minCriterion = pronunciationScore.min(fluencyScore).min(lexicalScore).min(grammarScore);
         if (minCriterion.compareTo(BigDecimal.valueOf(5)) < 0) {
             isFloorCapTriggered = true;
             log.warn("[GATEKEEPER - CRITICAL FLOOR CAP] Detected a critical breakdown in criteria. Min score is {}. The final holistic band score will be capped at 5.5.", minCriterion);
         }
+        */
         // --- END OF PHASE 1 ---
 
+        // DEFERRED PER CTO DIRECTIVE: IELTS criteria are graded independently without cross-skill penalization.
+        /*
         // ─── PHASE 2: CROSS-SKILL PENALTIES ───
         // 1. PILLAR II: ASYMMETRY PENALTY (Luật Phạt Lệch Trần)
         BigDecimal maxCriterion = pronunciationScore.max(fluencyScore).max(lexicalScore).max(grammarScore);
@@ -170,6 +175,7 @@ public class WebhookServiceImpl implements WebhookService {
             }
         }
         // ─── END OF PHASE 2 ───
+        */
 
         // Set the final validated AI sub-scores on the entity
         result.setGrammarScore(grammarScore);
@@ -194,12 +200,7 @@ public class WebhookServiceImpl implements WebhookService {
         }
         BigDecimal finalScore = BigDecimal.valueOf(roundedValue).setScale(1, RoundingMode.HALF_UP);
 
-        if (isFloorCapTriggered) {
-            finalScore = finalScore.min(BigDecimal.valueOf(5.5));
-            log.info("[GATEKEEPER] Floor Cap applied. Raw Average: {} -> Final Capped Band: {}", rawAverage, finalScore);
-        } else {
-            log.info("[GATEKEEPER] Holistic Cambridge Rounding applied. Raw Average: {} -> Final Band: {}", rawAverage, finalScore);
-        }
+        log.info("[GATEKEEPER] Independent Cambridge Floor Rounding applied. Raw Avg: {} -> Final Band: {}", rawAverage, finalScore);
 
         result.setAiScore(finalScore);
         // ─── END OF PHASE 3 ───

@@ -117,16 +117,12 @@ public class WebhookServiceImplTest {
     @ParameterizedTest
     @CsvSource({
         // prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore
-        "7.4, 7.4, 7.4, 7.4, 7.0, 7.0, 7.0, 7.0, 7.0", // normal average = 7.0 -> rounds to 7.0
-        "7.0, 7.0, 7.0, 8.0, 7.0, 7.0, 7.0, 8.0, 7.5", // average = 7.25 -> rounds to 7.5
-        "6.0, 6.0, 7.0, 8.0, 6.0, 6.0, 7.0, 8.0, 7.0", // average = 6.75 -> rounds to 7.0
-        "5.0, 6.0, 6.0, 6.0, 5.0, 6.0, 6.0, 6.0, 6.0", // average = 5.75 -> rounds to 6.0
-        "7.0, 7.0, 7.0, 7.0, 7.0, 7.0, 7.0, 7.0, 7.0", // average = 7.0 -> rounds to 7.0
-        "6.5, 7.0, 7.0, 7.0, 7.0, 7.0, 7.0, 7.0, 7.0", // norm: 7, 7, 7, 7 -> average = 7.0 -> rounds to 7.0
-        "6.4, 7.0, 7.0, 7.0, 6.0, 7.0, 7.0, 7.0, 7.0", // norm: 6, 7, 7, 7 -> average = 6.75 -> rounds to 7.0
-        "5.5, 5.5, 6.5, 6.5, 6.0, 6.0, 7.0, 7.0, 6.5", // norm: 6, 6, 7, 7 -> average = 6.5 -> rounds to 6.5
-        "5.0, 5.0, 5.0, 5.8, 5.0, 5.0, 5.0, 6.0, 5.5", // norm: 5, 5, 5, 6 -> average = 5.25 -> rounds to 5.5
-        "5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0"  // average = 5.0 -> rounds to 5.0
+        "7.4, 7.4, 7.4, 7.4, 7.0, 7.0, 7.0, 7.0, 7.0", // Perfect alignment
+        "9.0, 4.0, 9.0, 4.0, 9.0, 4.0, 9.0, 4.0, 6.5", // Extreme variance that would have triggered Asymmetry, but now shouldn't (Avg: 26/4 = 6.5)
+        "9.0, 4.0, 9.0, 5.0, 9.0, 4.0, 9.0, 5.0, 7.0", // Extreme variance triggering floor rounding up (Avg: 27/4 = 6.75 -> 7.0)
+        "8.0, 8.0, 8.0, 9.0, 8.0, 8.0, 8.0, 9.0, 8.5", // Avg: 33/4 = 8.25 -> 8.5
+        "5.0, 5.0, 5.0, 6.0, 5.0, 5.0, 5.0, 6.0, 5.5", // Avg: 21/4 = 5.25 -> 5.5
+        "6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0"  // Avg: 24/4 = 6.0
     })
     public void testPhase3_CambridgeOfficialRounding(
             Double prInput, Double fcInput, Double lrInput, Double graInput,
@@ -135,11 +131,8 @@ public class WebhookServiceImplTest {
         assertScoring(prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore);
     }
 
-    /**
-     * Test Phase 1 Critical Floor Cap logic.
-     * If any criterion score is strictly below 5.0 (after normalization to integer), the Floor Cap triggers.
-     * This limits the final holistic band score to a maximum of 5.5.
-     */
+    // DEFERRED PER CTO DIRECTIVE: Tests disabled because IELTS criteria are now graded independently without cross-skill penalization.
+    /*
     @ParameterizedTest
     @CsvSource({
         // prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore
@@ -155,12 +148,10 @@ public class WebhookServiceImplTest {
             double expectedFinalScore) {
         assertScoring(prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore);
     }
+    */
 
-    /**
-     * Test Phase 2 Asymmetry Penalty.
-     * If the score delta (max - min) is strictly greater than 2,
-     * the maximum scores are capped to (min + 2).
-     */
+    // DEFERRED PER CTO DIRECTIVE: Tests disabled because IELTS criteria are now graded independently without cross-skill penalization.
+    /*
     @ParameterizedTest
     @CsvSource({
         // prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore
@@ -174,11 +165,10 @@ public class WebhookServiceImplTest {
             double expectedFinalScore) {
         assertScoring(prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore);
     }
+    */
 
-    /**
-     * Test Phase 2 Gravity Pull Rule 3A: Grammar drags down Fluency.
-     * If grammarScore <= 4, fluencyScore cannot exceed grammarScore + 2.
-     */
+    // DEFERRED PER CTO DIRECTIVE: Tests disabled because IELTS criteria are now graded independently without cross-skill penalization.
+    /*
     @ParameterizedTest
     @CsvSource({
         // prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore
@@ -192,11 +182,10 @@ public class WebhookServiceImplTest {
             double expectedFinalScore) {
         assertScoring(prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore);
     }
+    */
 
-    /**
-     * Test Phase 2 Gravity Pull Rule 3B: Unintelligible Pronunciation isolates Lexical Resource.
-     * If pronunciationScore <= 4, lexicalScore cannot exceed 5.
-     */
+    // DEFERRED PER CTO DIRECTIVE: Tests disabled because IELTS criteria are now graded independently without cross-skill penalization.
+    /*
     @ParameterizedTest
     @CsvSource({
         // prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore
@@ -210,4 +199,5 @@ public class WebhookServiceImplTest {
             double expectedFinalScore) {
         assertScoring(prInput, fcInput, lrInput, graInput, expectedPr, expectedFc, expectedLr, expectedGra, expectedFinalScore);
     }
+    */
 }

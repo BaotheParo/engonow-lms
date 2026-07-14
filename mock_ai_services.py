@@ -9,6 +9,10 @@ Run: uvicorn mock_ai_services:app --host 0.0.0.0 --port 8001 --reload
   or: python mock_ai_services.py
 """
 
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -19,6 +23,8 @@ import asyncio
 import logging
 import httpx
 import json
+import google.generativeai as genai
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("engonow.mock")
@@ -114,6 +120,332 @@ async def mock_omr_scan(
     logger.info("[OMR SERVICE] Extraction complete. Returning %d answers for exam_id=%d.", len(results), exam_id)
     return results
 
+async def transcribe_audio_whisper(filename: str, contents: bytes, content_type: str, api_key: str) -> str:
+    """
+    Transcribes audio using Groq Whisper-large-v3 with verbose_json, temperature=0,
+    and inserts pause markers and low confidence indicators based on timestamps and log probabilities.
+    """
+    logger.info("[WHISPER STT] Starting Groq Whisper transcription call for %s...", filename)
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+    files = {
+        "file": (filename, contents, content_type)
+    }
+    data = {
+        "model": "whisper-large-v3",
+        "response_format": "verbose_json",
+        "temperature": "0.0",
+        "timestamp_granularities[]": "word",
+        "prompt": "Verbatim transcript. Keep every stutter, broken sentence, filler word, and grammar mistake exactly as spoken. If the speaker says 'Yesterday I go' or 'She don't like', transcribe it exactly without fixing tenses or missing plurals."
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            stt_response = await client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers=headers,
+                files=files,
+                data=data
+            )
+
+        if stt_response.status_code != 200:
+            raise Exception(f"Groq API error: {stt_response.status_code} - {stt_response.text}")
+
+        stt_json = stt_response.json()
+    except Exception as e:
+        logger.error("[WHISPER STT] API connection or response failure: %s", str(e))
+        raise
+
+    try:
+        words = []
+        raw_words = stt_json.get("words")
+        segments = stt_json.get("segments", [])
+
+        # Parse word list with fallback logprob from segments
+        if segments:
+            for segment in segments:
+                avg_logprob = segment.get("avg_logprob")
+                seg_words = segment.get("words", [])
+                for sw in seg_words:
+                    words.append({
+                        "word": sw.get("word"),
+                        "start": float(sw.get("start", 0.0)),
+                        "end": float(sw.get("end", 0.0)),
+                        "logprob": sw.get("logprob") if sw.get("logprob") is not None else avg_logprob
+                    })
+
+        # Fallback to flat top-level words array if segments nested words are not present
+        if not words and raw_words:
+            for rw in raw_words:
+                words.append({
+                    "word": rw.get("word"),
+                    "start": float(rw.get("start", 0.0)),
+                    "end": float(rw.get("end", 0.0)),
+                    "logprob": rw.get("logprob")
+                })
+
+        # Aggregate transcript and inject tags
+        if not words:
+            text = stt_json.get("text", "")
+            logger.info("[WHISPER STT] No word timestamps found. Returning raw text.")
+            return text
+
+        annotated_tokens = []
+        pauses_count = 0
+        low_conf_count = 0
+
+        for i, w in enumerate(words):
+            word_str = w.get("word", "").strip()
+            start = w.get("start", 0.0)
+            end = w.get("end", 0.0)
+            logprob = w.get("logprob")
+
+            # Check gap duration for consecutive words
+            if i > 0:
+                prev_end = words[i - 1].get("end", 0.0)
+                gap = float(start) - float(prev_end)
+                if gap > 1.5:
+                    annotated_tokens.append(f"[pause: {gap:.1f}s]")
+                    pauses_count += 1
+
+            annotated_tokens.append(word_str)
+
+            # Check pronunciation confidence logprob threshold < -0.5
+            if logprob is not None:
+                try:
+                    if float(logprob) < -0.5:
+                        annotated_tokens.append("[LOW_CONFIDENCE]")
+                        low_conf_count += 1
+                except (ValueError, TypeError):
+                    pass
+
+        annotated_transcript = " ".join(annotated_tokens)
+        logger.info(
+            "[WHISPER STT] Completed. Injected %d pause markers and %d [LOW_CONFIDENCE] tags.",
+            pauses_count, low_conf_count
+        )
+        return annotated_transcript
+
+    except Exception as e:
+        logger.error("[WHISPER STT] Error parsing timestamps or logging metadata: %s", str(e))
+        return stt_json.get("text", "")
+
+
+async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata: str, api_key: str) -> dict:
+    """
+    Evaluates student speaking response against questions using Gemini 1.5 Flash.
+    Returns a strictly structured JSON dict report according to IELTS grading criteria.
+    """
+    logger.info("[GEMINI EVALUATOR] Initiating Gemini evaluation call...")
+    try:
+        genai.configure(api_key=api_key)
+        
+        system_prompt = (
+            "You are a Senior IELTS Speaking Examiner certified by Cambridge Assessment English. "
+            "You possess forensic command of the official Cambridge Band Descriptors (Bands 1-9).\n\n"
+            "CRITICAL GUARDRAIL: Do NOT penalize Pronunciation or Fluency for [LOW_CONFIDENCE] tags if they are attached to Proper Nouns, Vietnamese names (e.g., Nguyen, Ho Chi Minh), or non-English terms.\n\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            " CAMBRIDGE CALIBRATION & RANGE-OVER-ACCURACY (ANTI-COMPRESSION LAW)\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            "1. DO NOT compress scores to Band 5 or 6 out of hesitation. Use 7, 8, 9 for strong candidates, and 3, 4 for weak ones.\n"
+            "2. Band 7+ candidates WILL make mistakes. Attempting complex structures (conditionals, passives) and failing slightly is Band 7 evidence. Producing only simple, error-free sentences is Band 5 evidence. RANGE OUTWEIGHS ACCURACY at high bands.\n"
+            "3. Do not drop a score to 6 just because you found 1-2 errors. Rare errors + wide range = Band 8.\n\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            " THE DATA CONTRACT & INTEGER RULE (CRITICAL):\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            "The 4 criterion score fields MUST be WHOLE NUMBERS ONLY (1, 2, 3, 4, 5, 6, 7, 8, 9).\n"
+            "❌ ALL DECIMALS ARE FORBIDDEN (e.g., 6.5, 7.5, 6.0, 7.0).\n"
+            "If torn between bands, use the WEIGHT OF EVIDENCE to commit to ONE absolute integer."
+        )
+
+        model = genai.GenerativeModel(
+            model_name="models/gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"},
+            system_instruction=system_prompt
+        )
+
+        prompt = (
+            f"Here are the specific questions asked by the examiner (metadata):\n{questions_metadata}\n\n"
+            f"Here is the annotated transcript of the student's response:\n\"{annotated_transcript}\"\n\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            " EVALUATION PROTOCOL & QUOTE-FIRST RULE\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            "1. DIAGNOSTIC EVIDENCE: For each criterion, find diagnostic evidence. You MUST include POSITIVE STRENGTHS for high scores, not just errors.\n"
+            "2. QUOTE-FIRST: The 'original_quote' field MUST be extracted exactly character-for-character from the transcript. Do not paraphrase.\n"
+            "3. BIDIRECTIONAL JUSTIFICATION: In the 'overallComment', you MUST briefly justify the score by proving why it is not higher and not lower (e.g., 'Scored 7 not 8 because of X; not 6 because of Y').\n"
+            "4. LATENCY OPTIMIZATION: Limit the 'evidences' array to MAXIMUM 2 items per criterion (mix strengths and weaknesses). Keep explanations brief.\n\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            " REQUIRED JSON OUTPUT SCHEMA\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            "Evaluate the response. You MUST output a JSON object matching this schema exactly:\n"
+            "{\n"
+            "  \"pronunciationScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"fluencyScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"lexicalScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"grammarScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"evidences\": [\n"
+            "    {\n"
+            "      \"criterion\": \"[CHOOSE ONE: GRAMMAR, LEXICAL, FLUENCY, PRONUNCIATION]\",\n"
+            "      \"testPart\": \"[CHOOSE ONE: PART_1, PART_2, PART_3]\",\n"
+            "      \"question\": \"[Question text here]\",\n"
+            "      \"original_quote\": \"[Exact verbatim quote here]\",\n"
+            "      \"error\": \"[Explain the mistake, OR describe the positive language strength]\",\n"
+            "      \"correction\": \"[Correction, OR write 'N/A' if it is a positive strength]\",\n"
+            "      \"explanation\": \"[Pedagogical reasoning]\"\n"
+            "    }\n"
+            "  ],\n"
+            "  \"overallComment\": \"[Bidirectional Justification: Scored X not X+1 because... Not X-1 because... Summary.]\"\n"
+            "}\n"
+        )
+
+        response = await model.generate_content_async(prompt)
+        text_content = response.text
+        
+        # Parse the JSON string
+        result_dict = json.loads(text_content)
+        logger.info("[GEMINI EVALUATOR] Successfully generated speaking evaluation from Gemini.")
+        return result_dict
+
+    except Exception as e:
+        logger.error("[GEMINI EVALUATOR] Error during Gemini generate content or JSON parsing: %s", str(e))
+        # Return a safe fallback dictionary
+        return {
+            "pronunciationScore": 0,
+            "fluencyScore": 0,
+            "lexicalScore": 0,
+            "grammarScore": 0,
+            "evidences": [],
+            "overallComment": f"Failed to perform speaking evaluation due to an error: {str(e)}"
+        }
+
+
+async def process_speaking_evaluation_task(
+    session_id: str,
+    filename: str,
+    contents: bytes,
+    content_type: str,
+    questions_metadata: str,
+    groq_api_key: str,
+    gemini_api_key: str,
+    webhook_url: str
+):
+    logger.info("[ORCHESTRATOR] Starting speaking evaluation task for session_id=%s, file=%s", session_id, filename)
+    
+    annotated_transcript = ""
+    gemini_result_dict = {}
+    status_flag = "SUCCESS"
+    overall_comment = ""
+    
+    # Step 1: Whisper STT Transcription
+    try:
+        annotated_transcript = await transcribe_audio_whisper(
+            filename=filename,
+            contents=contents,
+            content_type=content_type,
+            api_key=groq_api_key
+        )
+    except Exception as e:
+        logger.error("[ORCHESTRATOR] Whisper transcription failed: %s", str(e))
+        status_flag = "SYSTEM_ERROR"
+        annotated_transcript = ""
+        
+    # Step 2: Gemini LLM Evaluation (Only if Whisper succeeded)
+    if status_flag == "SUCCESS":
+        try:
+            gemini_result_dict = await evaluate_speaking_gemini(
+                annotated_transcript=annotated_transcript,
+                questions_metadata=questions_metadata,
+                api_key=gemini_api_key
+            )
+            # If the call returned the fallback dict representing an error, update status_flag
+            if gemini_result_dict.get("pronunciationScore") == 0 and "Failed" in gemini_result_dict.get("overallComment", ""):
+                status_flag = "LLM_ERROR"
+                overall_comment = gemini_result_dict.get("overallComment", "")
+            else:
+                overall_comment = gemini_result_dict.get("overallComment", "")
+        except Exception as e:
+            logger.error("[ORCHESTRATOR] Gemini evaluation failed: %s", str(e))
+            status_flag = "LLM_ERROR"
+            overall_comment = f"Speaking evaluation failed due to LLM error: {str(e)}"
+            
+    # Step 3: DTO Mapping & Status Handling
+    mapped_evidences = []
+    if status_flag == "SUCCESS":
+        for ev in gemini_result_dict.get("evidences", []):
+            mapped_ev = {
+                "criterion": ev.get("criterion", "GRAMMAR"),
+                "testPart": ev.get("testPart") or ev.get("part", "PART_1"),
+                "part": ev.get("testPart") or ev.get("part", "PART_1"),
+                "question": ev.get("question", ""),
+                "original_quote": ev.get("original_quote") or ev.get("quote", ""),
+                "quote": ev.get("original_quote") or ev.get("quote", ""),
+                "error": ev.get("error") or ev.get("error_type", ""),
+                "error_type": ev.get("error") or ev.get("error_type", ""),
+                "correction": ev.get("correction", ""),
+                "explanation": ev.get("explanation", "")
+            }
+            mapped_evidences.append(mapped_ev)
+            
+        def safe_int(val, default=0):
+            try:
+                return int(float(val)) if val is not None else default
+            except (ValueError, TypeError):
+                return default
+
+        pron_score = safe_int(gemini_result_dict.get("pronunciationScore"))
+        flu_score = safe_int(gemini_result_dict.get("fluencyScore"))
+        lex_score = safe_int(gemini_result_dict.get("lexicalScore"))
+        gra_score = safe_int(gemini_result_dict.get("grammarScore"))
+    else:
+        pron_score = 0
+        flu_score = 0
+        lex_score = 0
+        gra_score = 0
+        overall_comment = f"[CRITICAL SYSTEM ERROR] Groq/Gemini connectivity failed. Please re-queue this session. (Status: {status_flag})"
+
+    payload = {
+        # User requested fields
+        "sessionId": session_id,
+        "pronunciationScore": pron_score,
+        "fluencyScore": flu_score,
+        "lexicalScore": lex_score,
+        "grammarScore": gra_score,
+        "evidences": mapped_evidences,
+        "transcribedText": annotated_transcript,
+        "overallComment": overall_comment,
+        "status": status_flag,
+
+        # Snake_case and Spring Boot record mappings compatibility
+        "session_id": session_id,
+        "pronunciation_score": pron_score,
+        "fluency_score": flu_score,
+        "lexical_score": lex_score,
+        "grammar_score": gra_score,
+        "feedback_text": overall_comment,
+        "feedbackText": overall_comment,
+        "self_corrections": [],
+        "selfCorrections": []
+    }
+
+    # Step 4: Fire Webhook Callback
+    logger.info("[ORCHESTRATOR] Sending webhook callback to %s with status=%s...", webhook_url, status_flag)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                webhook_url,
+                json=payload,
+                timeout=10.0
+            )
+        
+        if response.status_code >= 200 and response.status_code < 300:
+            logger.info("[ORCHESTRATOR] Webhook successfully delivered to Java server. Status code: %d", response.status_code)
+        else:
+            logger.error("[ORCHESTRATOR] Webhook rejected by Java server. Status code: %d, Response: %s", response.status_code, response.text)
+            
+    except Exception as e:
+        logger.error("[ORCHESTRATOR] Webhook request delivery failed: %s", str(e))
+
 
 @app.post(
     "/api/v1/ai/speaking-analyze",
@@ -137,8 +469,11 @@ async def mock_speaking_analyze(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON format in questions_metadata: {str(e)}")
 
-    GROQ_API_KEY = "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"
-    GEMINI_API_KEY = "AQ.Ab8RN6IgM2qCjp5qTChQ6LPme0NaOAUGXY6Iwq6x_-vXB9WMxQ"
+    groq_key = os.getenv("WHISPER_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+
+    if not groq_key or not gemini_key:
+        raise HTTPException(status_code=500, detail="Missing API keys in .env")
 
     contents = await file.read()
     logger.info(
@@ -148,167 +483,45 @@ async def mock_speaking_analyze(
 
     try:
         # ─── PHASE 1: STT (Groq Whisper-large-v3) ───
-        logger.info("[SPEAKING SERVICE] Initializing Groq Whisper transcription call...")
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}"
-        }
-        files = {
-            "file": (file.filename, contents, file.content_type or "audio/mpeg")
-        }
-        data = {
-            "model": "whisper-large-v3",
-            "response_format": "verbose_json",
-            "timestamp_granularities[]": "word"
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            stt_response = await client.post(
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                headers=headers,
-                files=files,
-                data=data
-            )
-
-        if stt_response.status_code != 200:
-            raise Exception(f"Groq API error: {stt_response.status_code} - {stt_response.text}")
-
-        stt_json = stt_response.json()
-
-        # Parse word timestamps
-        words = []
-        raw_words = stt_json.get("words")
-        if raw_words:
-            for w in raw_words:
-                words.append({
-                    "word": w.get("word"),
-                    "start": w.get("start"),
-                    "end": w.get("end")
-                })
-
-        # Calculate hesitation pauses
-        annotated_transcript = ""
-        if words:
-            annotated_transcript = words[0]["word"]
-            for i in range(1, len(words)):
-                prev_end = words[i - 1]["end"]
-                curr_start = words[i]["start"]
-                pause_duration = curr_start - prev_end
-                if pause_duration > 1.5:
-                    annotated_transcript += f" [{round(pause_duration, 1)}s pause]"
-                annotated_transcript += " " + words[i]["word"]
-        else:
-            annotated_transcript = stt_json.get("text", "")
+        annotated_transcript = await transcribe_audio_whisper(
+            filename=file.filename,
+            contents=contents,
+            content_type=file.content_type or "audio/mpeg",
+            api_key=groq_key
+        )
 
         logger.info(f"[SPEAKING SERVICE] Transcript generated: {annotated_transcript[:200]}...")
 
-        # ─── PHASE 2: LLM Evaluation (Gemini 2.5 Flash) ───
-        logger.info("[SPEAKING SERVICE] Initializing Gemini 2.5 Flash evaluation call...")
-        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-
-        system_instruction = (
-            "You are an IELTS Examiner. The student was asked the following specific questions:\n"
-            f"{json.dumps(metadata_list, indent=2)}\n\n"
-            f"Here is their complete transcribed response with recorded pauses:\n"
-            f"\"{annotated_transcript}\"\n\n"
-            "Evaluate grammar, lexical, and fluency errors based on these exact questions. "
-            "You must respond with a single, valid JSON object matching the SpeakingAnalysisResult Pydantic schema exactly. "
-            "Ensure the JSON matches this structure exactly:\n"
-            "{\n"
-            "  \"pronunciation_score\": float (1.0 to 9.0),\n"
-            "  \"fluency_score\": float (1.0 to 9.0),\n"
-            "  \"lexical_score\": float (1.0 to 9.0),\n"
-            "  \"grammar_score\": float (1.0 to 9.0),\n"
-            "  \"evidences\": [\n"
-            "    {\n"
-            "      \"criterion\": \"GRAMMAR\" | \"LEXICAL\" | \"FLUENCY\" | \"PRONUNCIATION\",\n"
-            "      \"part\": \"PART_1\" | \"PART_2\" | \"PART_3\",\n"
-            "      \"question\": \"exact question from metadata\",\n"
-            "      \"quote\": \"exact quote from transcript\",\n"
-            "      \"error_type\": \"category of error\",\n"
-            "      \"correction\": \"suggested correction\",\n"
-            "      \"explanation\": \"pedagogical explanation\"\n"
-            "    }\n"
-            "  ],\n"
-            "  \"self_corrections\": [\n"
-            "    {\n"
-            "      \"original\": \"original incorrect/repeated text\",\n"
-            "      \"marker\": \"marker word used (like sorry, I mean, no, etc.)\",\n"
-            "      \"corrected\": \"corrected text\",\n"
-            "      \"type\": \"GRAMMAR\" | \"LEXICAL\"\n"
-            "    }\n"
-            "  ],\n"
-            "  \"feedback_text\": \"summary of feedback\"\n"
-            "}\n"
-            "Note: Return raw JSON only, do not wrap in markdown block wrappers."
+        # ─── PHASE 2: LLM Evaluation (Gemini 1.5 Flash) ───
+        logger.info("[SPEAKING SERVICE] Initializing Gemini 1.5 Flash evaluation call...")
+        gemini_result_dict = await evaluate_speaking_gemini(
+            annotated_transcript=annotated_transcript,
+            questions_metadata=questions_metadata,
+            api_key=gemini_key
         )
 
-        gemini_payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": system_instruction
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "responseMimeType": "application/json"
-            }
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            gemini_response = await client.post(
-                gemini_url,
-                headers={"Content-Type": "application/json"},
-                json=gemini_payload
+        evidences = [
+            SpeakingEvidence(
+                criterion=e.get("criterion", "GRAMMAR"),
+                part=e.get("testPart") or e.get("part", "PART_1"),
+                question=e.get("question", ""),
+                quote=e.get("original_quote") or e.get("quote", ""),
+                error_type=e.get("error") or e.get("error_type", ""),
+                correction=e.get("correction", ""),
+                explanation=e.get("explanation", "")
             )
-
-        if gemini_response.status_code != 200:
-            raise Exception(f"Gemini API error: {gemini_response.status_code} - {gemini_response.text}")
-
-        gemini_json = gemini_response.json()
-
-        candidates = gemini_json.get("candidates", [])
-        if not candidates:
-            raise Exception("No candidates returned from Gemini.")
-
-        text_content = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-        if text_content.strip().startswith("```"):
-            text_content = text_content.strip().split("```")[1]
-            if text_content.startswith("json"):
-                text_content = text_content[4:]
-
-        evaluation_result = json.loads(text_content)
+            for e in gemini_result_dict.get("evidences", [])
+        ]
 
         result = SpeakingAnalysisResult(
             session_id=session_id,
-            pronunciation_score=round(float(evaluation_result.get("pronunciation_score", 7.0)), 1),
-            fluency_score=round(float(evaluation_result.get("fluency_score", 7.0)), 1),
-            lexical_score=round(float(evaluation_result.get("lexical_score", 7.0)), 1),
-            grammar_score=round(float(evaluation_result.get("grammar_score", 7.0)), 1),
-            evidences=[
-                SpeakingEvidence(
-                    criterion=e.get("criterion", "GRAMMAR"),
-                    part=e.get("part", "PART_1"),
-                    question=e.get("question", ""),
-                    quote=e.get("quote", ""),
-                    error_type=e.get("error_type", ""),
-                    correction=e.get("correction", ""),
-                    explanation=e.get("explanation", "")
-                )
-                for e in evaluation_result.get("evidences", [])
-            ],
-            self_corrections=[
-                SelfCorrection(
-                    original=sc.get("original", ""),
-                    marker=sc.get("marker", ""),
-                    corrected=sc.get("corrected", ""),
-                    type=sc.get("type", "GRAMMAR")
-                )
-                for sc in evaluation_result.get("self_corrections", [])
-            ],
-            feedback_text=evaluation_result.get("feedback_text", "")
+            pronunciation_score=float(gemini_result_dict.get("pronunciationScore", 0.0)),
+            fluency_score=float(gemini_result_dict.get("fluencyScore", 0.0)),
+            lexical_score=float(gemini_result_dict.get("lexicalScore", 0.0)),
+            grammar_score=float(gemini_result_dict.get("grammarScore", 0.0)),
+            evidences=evidences,
+            self_corrections=[],
+            feedback_text=gemini_result_dict.get("overallComment", "")
         )
 
         logger.info(f"[SPEAKING SERVICE] Evaluation generated successfully for session_id='{session_id}'")
