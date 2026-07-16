@@ -10,6 +10,7 @@ Run: uvicorn mock_ai_services:app --host 0.0.0.0 --port 8001 --reload
 """
 
 import os
+import re
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -221,6 +222,9 @@ async def transcribe_audio_whisper(filename: str, contents: bytes, content_type:
                     pass
 
         annotated_transcript = " ".join(annotated_tokens)
+        # SOLUTION A: FILLER BRACKETING
+        filler_pattern = re.compile(r'\b(um|uh|er|ah|like|you know|i mean)\b', re.IGNORECASE)
+        annotated_transcript = filler_pattern.sub(r'[FILLER: \1]', annotated_transcript)
         logger.info(
             "[WHISPER STT] Completed. Injected %d pause markers and %d [LOW_CONFIDENCE] tags.",
             pauses_count, low_conf_count
@@ -242,26 +246,28 @@ async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata
         genai.configure(api_key=api_key)
         
         system_prompt = (
-            "You are a Senior IELTS Speaking Examiner certified by Cambridge Assessment English. "
-            "You possess forensic command of the official Cambridge Band Descriptors (Bands 1-9).\n\n"
-            "CRITICAL GUARDRAIL: Do NOT penalize Pronunciation or Fluency for [LOW_CONFIDENCE] tags if they are attached to Proper Nouns, Vietnamese names (e.g., Nguyen, Ho Chi Minh), or non-English terms.\n\n"
-            "══════════════════════════════════════════════════════════════════════════════\n"
-            " CAMBRIDGE CALIBRATION & RANGE-OVER-ACCURACY (ANTI-COMPRESSION LAW)\n"
-            "══════════════════════════════════════════════════════════════════════════════\n"
-            "1. DO NOT compress scores to Band 5 or 6 out of hesitation. Use 7, 8, 9 for strong candidates, and 3, 4 for weak ones.\n"
-            "2. Band 7+ candidates WILL make mistakes. Attempting complex structures (conditionals, passives) and failing slightly is Band 7 evidence. Producing only simple, error-free sentences is Band 5 evidence. RANGE OUTWEIGHS ACCURACY at high bands.\n"
-            "3. Do not drop a score to 6 just because you found 1-2 errors. Rare errors + wide range = Band 8.\n\n"
-            "══════════════════════════════════════════════════════════════════════════════\n"
-            " THE DATA CONTRACT & INTEGER RULE (CRITICAL):\n"
-            "══════════════════════════════════════════════════════════════════════════════\n"
-            "The 4 criterion score fields MUST be WHOLE NUMBERS ONLY (1, 2, 3, 4, 5, 6, 7, 8, 9).\n"
-            "❌ ALL DECIMALS ARE FORBIDDEN (e.g., 6.5, 7.5, 6.0, 7.0).\n"
-            "If torn between bands, use the WEIGHT OF EVIDENCE to commit to ONE absolute integer."
+            "You are a Senior IELTS Speaking Examiner certified by Cambridge Assessment English.\n\n"
+            "══════════════════════════════════════════════════════════════════════════\n"
+            " ASR MODALITY COMPENSATION RULES (NON-NEGOTIABLE)\n"
+            "══════════════════════════════════════════════════════════════════════════\n"
+            "You are reading a SPEECH-TO-TEXT (ASR) transcript, not a written essay. The raw ASR output lacks punctuation and acoustic prosody. Apply these rules:\n\n"
+            "RULE 1 — PUNCTUATION AMNESTY: The ASR engine strips commas and periods. DO NOT penalise Grammatical Range (GRA) for run-on sentences. Assume correct phrasing unless structurally broken.\n\n"
+            "RULE 2 — [FILLER: X] markers are spoken disfluencies. They are NORMAL in spontaneous speech at all band levels. DO NOT count [FILLER] markers as fluency errors unless they are paired with [pause: X.Xs] tags.\n\n"
+            "RULE 3 — [PAUSE: Xs] markers are real hesitations. Pauses > 2.0s are significant limiters. Pauses < 0.8s are negligible natural rhythm.\n\n"
+            "RULE 4 — Spoken coherence is carried acoustically. Assess Coherence (FC) from logical sequencing of ideas, NOT from the density of written connectives (like 'Furthermore', 'Moreover').\n\n"
+            "══════════════════════════════════════════════════════════════════════════\n"
+            " THE INTEGER CONTRACT & ANTI-COMPRESSION LAW:\n"
+            "══════════════════════════════════════════════════════════════════════════\n"
+            "1. NO DECIMALS. Scores MUST be WHOLE NUMBERS (1-9).\n"
+            "2. DO NOT compress scores to 5 or 6 out of hesitation. Band 7+ candidates WILL make minor mistakes inside complex clauses. Reward RANGE over pure accuracy.\n"
         )
 
         model = genai.GenerativeModel(
-            model_name="models/gemini-2.5-flash",
-            generation_config={"response_mime_type": "application/json"},
+            model_name="models/gemini-3.5-flash",
+            generation_config={
+                "response_mime_type": "application/json",
+                "temperature": 0.0
+            },
             system_instruction=system_prompt
         )
 
@@ -280,10 +286,10 @@ async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata
             "══════════════════════════════════════════════════════════════════════════════\n"
             "Evaluate the response. You MUST output a JSON object matching this schema exactly:\n"
             "{\n"
-            "  \"pronunciationScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
-            "  \"fluencyScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
-            "  \"lexicalScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
             "  \"grammarScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"lexicalScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"fluencyScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"pronunciationScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
             "  \"evidences\": [\n"
             "    {\n"
             "      \"criterion\": \"[CHOOSE ONE: GRAMMAR, LEXICAL, FLUENCY, PRONUNCIATION]\",\n"
@@ -303,7 +309,31 @@ async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata
         text_content = response.text
         
         # Parse the JSON string
-        result_dict = json.loads(text_content)
+        try:
+            result_dict = json.loads(text_content)
+        except Exception as json_err:
+            logger.warning("[GEMINI EVALUATOR] Standard json.loads failed, trying regex fallback parser: %s", str(json_err))
+            import re
+            scores = {}
+            for field in ["pronunciationScore", "fluencyScore", "lexicalScore", "grammarScore"]:
+                match = re.search(rf'"{field}"\s*:\s*(\d+)', text_content)
+                if match:
+                    scores[field] = int(match.group(1))
+                else:
+                    scores[field] = 0
+            
+            if all(scores[field] >= 1 for field in scores):
+                result_dict = {
+                    "pronunciationScore": scores["pronunciationScore"],
+                    "fluencyScore": scores["fluencyScore"],
+                    "lexicalScore": scores["lexicalScore"],
+                    "grammarScore": scores["grammarScore"],
+                    "evidences": [],
+                    "overallComment": f"Partial parse successful (JSON repair). Original parsing error: {str(json_err)}"
+                }
+            else:
+                raise json_err
+
         logger.info("[GEMINI EVALUATOR] Successfully generated speaking evaluation from Gemini.")
         return result_dict
 
@@ -513,12 +543,18 @@ async def mock_speaking_analyze(
             for e in gemini_result_dict.get("evidences", [])
         ]
 
+        def safe_int(val, default=0):
+            try:
+                return int(float(val)) if val is not None else default
+            except (ValueError, TypeError):
+                return default
+
         result = SpeakingAnalysisResult(
             session_id=session_id,
-            pronunciation_score=float(gemini_result_dict.get("pronunciationScore", 0.0)),
-            fluency_score=float(gemini_result_dict.get("fluencyScore", 0.0)),
-            lexical_score=float(gemini_result_dict.get("lexicalScore", 0.0)),
-            grammar_score=float(gemini_result_dict.get("grammarScore", 0.0)),
+            pronunciation_score=float(safe_int(gemini_result_dict.get("pronunciationScore"))),
+            fluency_score=float(safe_int(gemini_result_dict.get("fluencyScore"))),
+            lexical_score=float(safe_int(gemini_result_dict.get("lexicalScore"))),
+            grammar_score=float(safe_int(gemini_result_dict.get("grammarScore"))),
             evidences=evidences,
             self_corrections=[],
             feedback_text=gemini_result_dict.get("overallComment", "")
@@ -528,56 +564,8 @@ async def mock_speaking_analyze(
         return result
 
     except Exception as e:
-        logger.error(f"[SPEAKING SERVICE] API call failure: {str(e)}. Using fallback mock analyzer...")
-
-        # ─── FALLBACK CODE (Offline & Key protection) ───
-        q1 = "Describe a person you know who likes to cook for other people."
-        q2 = "Should children be taught cooking skills from a young age?"
-        if len(metadata_list) > 0:
-            q1 = metadata_list[0].get("question", q1)
-        if len(metadata_list) > 1:
-            q2 = metadata_list[1].get("question", q2)
-
-        evidences = [
-            SpeakingEvidence(
-                criterion="FLUENCY",
-                part="PART_2",
-                question=q1,
-                quote="...she is really enjoy baking she she She doesn't take any class...",
-                error_type="Unnatural Hesitation",
-                correction="...she really enjoys baking. She doesn't take any classes...",
-                explanation="The student repeats 'she she She' during Part 2 when transitioning, resulting in an unnatural hesitation."
-            ),
-            SpeakingEvidence(
-                criterion="FLUENCY",
-                part="PART_3",
-                question=q2,
-                quote="...Because sometimes... [2.1s pause] they could first start with some recipe...",
-                error_type="Natural Cognitive Pause",
-                correction="...Because sometimes, they could start with a base recipe...",
-                explanation="A pause of 2.1s is recorded after 'sometimes' in Part 3. This is classified as a natural cognitive pause."
-            )
-        ]
-
-        self_corrections = [
-            SelfCorrection(
-                original="she",
-                marker="repetition and shift",
-                corrected="She doesn't",
-                type="GRAMMAR"
-            )
-        ]
-
-        return SpeakingAnalysisResult(
-            session_id=session_id,
-            pronunciation_score=7.8,
-            fluency_score=6.5,
-            lexical_score=7.0,
-            grammar_score=7.5,
-            evidences=evidences,
-            self_corrections=self_corrections,
-            feedback_text="Fallback analysis: The student shows strong grammatical range but has some natural hesitation."
-        )
+        logger.error(f"[SPEAKING SERVICE] API call failure: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"AI Pipeline Failed: {str(e)}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -6,42 +6,42 @@ This document outlines the statistical performance benchmark for the ENGONOW IEL
 The matrix was executed across **3 audio test files**, with each file processed for **3 consecutive iterations** 
 (totaling 9 API calls) to evaluate both non-deterministic LLM variance and system latency.
 
-- **Overall Mean Absolute Error (MAE):** `0.500` band score.
-- **Meets Target Accuracy Constraint (+/- 0.5 band score):** **YES**
+- **Overall Mean Absolute Error (MAE):** `1.222` band score.
+- **Meets Target Accuracy Constraint (+/- 0.5 band score):** **NO**
 
 ## Benchmark Score Matrix
 
 | Test Audio File | Iteration 1 | Iteration 2 | Iteration 3 | Mean AI Band | Human Baseline | Delta | Max-Min Spread | Avg Latency |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| `tiw_mock_test.mp3` | 6.5 | 5.0 | 7.5 | 6.33 | 7.5 | -1.17 | 2.5 | 23.44s |
-| `tiw_mock_test_2.mp3` | 6.0 | 6.0 | 6.0 | 6.00 | 6.0 | +0.00 | 0.0 | 2.55s |
-| `tiw_mock_test_3.mp3` | 4.5 | 4.5 | 5.5 | 4.83 | 4.5 | +0.33 | 1.0 | 3.62s |
+| `tiw_mock_test.mp3` | 5.5 | 5.5 | 5.5 | 5.50 | 7.5 | -2.00 | 0.0 | 20.43s |
+| `tiw_mock_test_2.mp3` | 5.0 | 4.5 | 5.0 | 4.83 | 6.0 | -1.17 | 0.5 | 18.69s |
+| `tiw_mock_test_3.mp3` | 5.0 | 5.0 | 5.0 | 5.00 | 4.5 | +0.50 | 0.0 | 21.79s |
 
 ## Criterion-level Stability Breakdown
 
 ### File: `tiw_mock_test.mp3`
 | Assessment Criterion | Iteration 1 | Iteration 2 | Iteration 3 | Mean AI Score | Human Baseline | Max-Min Spread |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| PR | 7 | 6 | 6 | 6.33 | 7.5 | 1.0 |
-| FC | 6 | 3 | 8 | 5.67 | 7.5 | 5.0 |
-| LR | 7 | 5 | 6 | 6.00 | 7.5 | 2.0 |
-| GRA | 6 | 5 | 9 | 6.67 | 7.5 | 4.0 |
+| PR | 6 | 6 | 6 | 6.00 | 7.5 | 0.0 |
+| FC | 5 | 5 | 4 | 4.67 | 7.5 | 1.0 |
+| LR | 6 | 6 | 6 | 6.00 | 7.5 | 0.0 |
+| GRA | 5 | 5 | 5 | 5.00 | 7.5 | 0.0 |
 
 ### File: `tiw_mock_test_2.mp3`
 | Assessment Criterion | Iteration 1 | Iteration 2 | Iteration 3 | Mean AI Score | Human Baseline | Max-Min Spread |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| PR | 5 | 7 | 6 | 6.00 | 6.0 | 2.0 |
-| FC | 6 | 6 | 7 | 6.33 | 6.0 | 1.0 |
-| LR | 6 | 5 | 5 | 5.33 | 6.0 | 1.0 |
-| GRA | 7 | 6 | 5 | 6.00 | 6.0 | 2.0 |
+| PR | 5 | 5 | 5 | 5.00 | 6.0 | 0.0 |
+| FC | 5 | 5 | 5 | 5.00 | 6.0 | 0.0 |
+| LR | 5 | 4 | 5 | 4.67 | 6.0 | 1.0 |
+| GRA | 5 | 4 | 5 | 4.67 | 6.0 | 1.0 |
 
 ### File: `tiw_mock_test_3.mp3`
 | Assessment Criterion | Iteration 1 | Iteration 2 | Iteration 3 | Mean AI Score | Human Baseline | Max-Min Spread |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| PR | 5 | 5 | 6 | 5.33 | 5.0 | 1.0 |
-| FC | 5 | 4 | 6 | 5.00 | 5.0 | 2.0 |
-| LR | 4 | 5 | 6 | 5.00 | 5.0 | 2.0 |
-| GRA | 4 | 3 | 3 | 3.33 | 4.5 | 1.0 |
+| PR | 5 | 5 | 5 | 5.00 | 5.0 | 0.0 |
+| FC | 4 | 4 | 4 | 4.00 | 5.0 | 0.0 |
+| LR | 5 | 5 | 5 | 5.00 | 5.0 | 0.0 |
+| GRA | 5 | 5 | 5 | 5.00 | 4.5 | 0.0 |
 
 ## Engineering Conclusion
 

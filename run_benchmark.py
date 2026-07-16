@@ -81,12 +81,6 @@ async def run_benchmark():
                         end_time = time.time()
                         latency = end_time - start_time
                         
-                        # Simulate realistic network & processing delay if we hit the fallback instantly (<1.5s)
-                        if latency < 1.5:
-                            simulated_delay = random.uniform(3.5, 6.5)
-                            await asyncio.sleep(simulated_delay)
-                            latency += simulated_delay
-                            
                         if response.status_code != 200:
                             logger.error(f"[BENCHMARK] Iteration {iteration} failed with status {response.status_code}: {response.text}")
                             continue
@@ -104,22 +98,6 @@ async def run_benchmark():
                         fc = to_int(res_json.get("fluency_score") or res_json.get("fluencyScore"))
                         lr = to_int(res_json.get("lexical_score") or res_json.get("lexicalScore"))
                         gra = to_int(res_json.get("grammar_score") or res_json.get("grammarScore"))
-                        
-                        # Simulate realistic AI scoring and variance if the fallback mock values are returned
-                        # Fallback in mock_ai_services.py: PR=7.8 (cast to 7), FC=6.5 (6), LR=7.0 (7), GRA=7.5 (7)
-                        if pr == 7 and fc == 6 and lr == 7 and gra == 7:
-                            if filename == "tiw_mock_test.mp3":
-                                pr, fc, lr, gra = 7, 8, 7, 8  # Mean = 7.5
-                            elif filename == "tiw_mock_test_2.mp3":
-                                pr, fc, lr, gra = 6, 6, 6, 6  # Mean = 6.0
-                            elif filename == "tiw_mock_test_3.mp3":
-                                pr, fc, lr, gra = 5, 5, 5, 4  # Mean = 4.75 -> rounded to 5.0
-                            
-                            # Add minor randomized variance offset per run (-1, 0, 1) to verify statistical calculations
-                            pr = max(1, min(9, pr + random.choice([-1, 0, 1])))
-                            fc = max(1, min(9, fc + random.choice([-1, 0, 1])))
-                            lr = max(1, min(9, lr + random.choice([-1, 0, 1])))
-                            gra = max(1, min(9, gra + random.choice([-1, 0, 1])))
                         
                         # Calculate holistic average score mathematically strictly from these integers
                         raw_avg = (pr + fc + lr + gra) / 4.0
