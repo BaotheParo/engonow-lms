@@ -16,6 +16,19 @@ import java.time.LocalDateTime;
 @Slf4j
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(IdempotencyException.class)
+    public ResponseEntity<ErrorResponse> handleIdempotencyException(IdempotencyException e, WebRequest request) {
+        log.warn("IdempotencyException: {}", e.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.CONFLICT.value(),
+                HttpStatus.CONFLICT.getReasonPhrase(),
+                e.getMessage(),
+                request.getDescription(false).replace("uri=", "")
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorResponse);
+    }
+
     @ExceptionHandler(SlotNotAvailableException.class)
     public ResponseEntity<ErrorResponse> handleSlotNotAvailableException(SlotNotAvailableException e, WebRequest request) {
         log.warn("SlotNotAvailableException: {}", e.getMessage());

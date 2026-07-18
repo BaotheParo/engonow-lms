@@ -1,5 +1,6 @@
 package com.engonow.lms.controller;
 
+import com.engonow.lms.annotation.Idempotent;
 import com.engonow.lms.dto.SpeakingWebhookPayload;
 import com.engonow.lms.service.WebhookService;
 import jakarta.validation.Valid;
@@ -20,6 +21,7 @@ public class WebhookCallbackController {
     }
 
     @PostMapping("/ai-grading")
+    @Idempotent(key = "#payload.sessionId", prefix = "webhook:speaking")
     public ResponseEntity<Void> handleSpeakingWebhookCallback(
             @RequestBody @Valid SpeakingWebhookPayload payload) {
         webhookService.handleAiSpeakingCallback(payload);

@@ -6,6 +6,7 @@ import com.engonow.lms.entity.MockTestBooking;
 import com.engonow.lms.entity.SpeakingSessionResult;
 import com.engonow.lms.repository.MockTestBookingRepository;
 import com.engonow.lms.repository.SpeakingSessionResultRepository;
+import com.engonow.lms.repository.IdempotencyRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -41,9 +47,18 @@ public class WebhookCallbackControllerIT {
     @Autowired
     private MockTestBookingRepository mockTestBookingRepository;
 
+    @Autowired
+    private IdempotencyRepository idempotencyRepository;
+
+    private String lastSessionId;
+
     @AfterEach
     public void cleanUp() {
         speakingSessionResultRepository.deleteAllInBatch();
+        if (lastSessionId != null) {
+            idempotencyRepository.releaseLock("webhook:speaking:" + lastSessionId);
+            lastSessionId = null;
+        }
     }
 
     @Test
@@ -473,5 +488,107 @@ public class WebhookCallbackControllerIT {
         assertEquals(0, BigDecimal.valueOf(7.0).compareTo(savedResult.getFluencyScore()));
         // Corrected average AI score = (7.0 + 7.0 + 7.0 + 7.0) / 4 = 7.00
         assertEquals(0, BigDecimal.valueOf(7.00).compareTo(savedResult.getAiScore()));
+    }
+
+    @Test
+    public void testHandleWebhook_IdempotencyDuplicateRequest() throws Exception {
+        // Arrange
+        MockTestBooking mockBooking = mockTestBookingRepository.findAll().stream()
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No test booking seeded in the database"));
+        String sessionId = mockBooking.getId().toString();
+        this.lastSessionId = sessionId;
+
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.0),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                "First unique request feedback."
+        );
+
+        // Act - First request succeeds
+        mockMvc.perform(post("/api/v1/callback/ai-grading")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isOk());
+
+        // Act - Second request with the same sessionId fails with 409 Conflict
+        mockMvc.perform(post("/api/v1/callback/ai-grading")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    public void testHandleWebhook_Idempotency_ConcurrencyStressTest() throws Exception {
+        // Arrange
+        MockTestBooking mockBooking = mockTestBookingRepository.findAll().stream()
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No test booking seeded in the database"));
+        String sessionId = mockBooking.getId().toString();
+        this.lastSessionId = sessionId;
+
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.0),
+                BigDecimal.valueOf(7.0),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                "Stress test payload."
+        );
+
+        int threadCount = 10;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(threadCount);
+
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger conflictCount = new AtomicInteger(0);
+        AtomicInteger otherErrorCount = new AtomicInteger(0);
+
+        for (int i = 0; i < threadCount; i++) {
+            executor.submit(() -> {
+                try {
+                    startLatch.await(); // Hold all threads at the starting line
+
+                    int status = mockMvc.perform(post("/api/v1/callback/ai-grading")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(payload)))
+                            .andReturn()
+                            .getResponse()
+                            .getStatus();
+
+                    if (status == 200) {
+                        successCount.incrementAndGet();
+                    } else if (status == 409) {
+                        conflictCount.incrementAndGet();
+                    } else {
+                        otherErrorCount.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        // Start the race!
+        startLatch.countDown();
+
+        // Wait for all threads to finish
+        boolean completed = doneLatch.await(10, TimeUnit.SECONDS);
+        executor.shutdown();
+
+        assertTrue(completed, "Stress test threads did not finish in time");
+        assertEquals(0, otherErrorCount.get(), "No other errors (like 500) should occur");
+        assertEquals(1, successCount.get(), "Exactly one request must succeed (200)");
+        assertEquals(9, conflictCount.get(), "Exactly 9 requests must return 409 Conflict");
     }
 }

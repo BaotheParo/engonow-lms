@@ -5,6 +5,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 
+import org.springframework.scheduling.annotation.EnableScheduling;
+
 /**
  * ENGONOW Smart LMS – Spring Boot Entry Point
  *
@@ -26,6 +28,7 @@ import org.springframework.context.annotation.Bean;
  *     implementations are Spring @Component beans, injectable via @Autowired.
  */
 @SpringBootApplication
+@EnableScheduling
 public class EngoNowLmsApplication {
 
     public static void main(String[] args) {
