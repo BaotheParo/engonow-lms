@@ -88,12 +88,12 @@ public class WebhookCallbackControllerIT {
         SpeakingSessionResult savedResult = speakingSessionResultRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new AssertionError("SpeakingSessionResult was not saved to database"));
 
-        // Grammar score should be overridden to 7.0 from 6.0
+        // Grammar score should be overridden to 7.0 from 6.0 (due to lack of evidences)
         assertEquals(0, BigDecimal.valueOf(7.0).compareTo(savedResult.getGrammarScore()));
         // Lexical score is 8.0 (no override)
         assertEquals(0, BigDecimal.valueOf(8.0).compareTo(savedResult.getLexicalScore()));
-        // Corrected average AI score = (7.0 + 7.5 + 8.0 + 7.0) / 4 = 7.375 (rounded to 7.38)
-        assertEquals(0, BigDecimal.valueOf(7.38).compareTo(savedResult.getAiScore()));
+        // Corrected average AI score: PR=7, FC=8, LR=8, GRA=7 -> Avg = 7.5 (Cambridge Rounded to 7.5)
+        assertEquals(0, BigDecimal.valueOf(7.5).compareTo(savedResult.getAiScore()));
     }
 
     @Test

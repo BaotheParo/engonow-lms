@@ -236,34 +236,53 @@ async def transcribe_audio_whisper(filename: str, contents: bytes, content_type:
         return stt_json.get("text", "")
 
 
-async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata: str, api_key: str) -> dict:
+async def call_gemini_with_retry(func, *args, **kwargs):
+    max_retries = 3
+    base_delay = 5.0
+    for attempt in range(max_retries + 1):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            err_msg = str(e)
+            is_rate_limit = "429" in err_msg or "ResourceExhausted" in err_msg or "quota" in err_msg.lower()
+            if is_rate_limit and attempt < max_retries:
+                delay = base_delay * (2 ** attempt) + random.uniform(0.5, 1.5)
+                logger.warning(
+                    "[GEMINI RETRY] Hit rate limit (429). Retrying attempt %d/%d in %.2fs...",
+                    attempt + 1, max_retries, delay
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
+
+async def evaluate_gra_lr_text(annotated_transcript: str, questions_metadata: str, api_key: str) -> dict:
     """
-    Evaluates student speaking response against questions using Gemini 1.5 Flash.
-    Returns a strictly structured JSON dict report according to IELTS grading criteria.
+    Evaluates student response for Grammatical Range & Accuracy (GRA) and Lexical Resource (LR) only using Gemini.
     """
-    logger.info("[GEMINI EVALUATOR] Initiating Gemini evaluation call...")
+    logger.info("[GEMINI EVALUATOR - TEXT TRACK] Initiating Gemini evaluation call...")
     try:
         genai.configure(api_key=api_key)
         
         system_prompt = (
-            "You are a Senior IELTS Speaking Examiner certified by Cambridge Assessment English.\n\n"
+            "You are a Senior IELTS Speaking Examiner certified by Cambridge Assessment English.\n"
+            "YOUR STRICT SCOPE: You are evaluating GRAMMATICAL RANGE & ACCURACY (GRA) and LEXICAL RESOURCE (LR) ONLY.\n"
+            "DO NOT evaluate Fluency or Pronunciation. Those are handled by a separate acoustic engine.\n\n"
             "══════════════════════════════════════════════════════════════════════════\n"
             " ASR MODALITY COMPENSATION RULES (NON-NEGOTIABLE)\n"
             "══════════════════════════════════════════════════════════════════════════\n"
-            "You are reading a SPEECH-TO-TEXT (ASR) transcript, not a written essay. The raw ASR output lacks punctuation and acoustic prosody. Apply these rules:\n\n"
-            "RULE 1 — PUNCTUATION AMNESTY: The ASR engine strips commas and periods. DO NOT penalise Grammatical Range (GRA) for run-on sentences. Assume correct phrasing unless structurally broken.\n\n"
-            "RULE 2 — [FILLER: X] markers are spoken disfluencies. They are NORMAL in spontaneous speech at all band levels. DO NOT count [FILLER] markers as fluency errors unless they are paired with [pause: X.Xs] tags.\n\n"
-            "RULE 3 — [PAUSE: Xs] markers are real hesitations. Pauses > 2.0s are significant limiters. Pauses < 0.8s are negligible natural rhythm.\n\n"
-            "RULE 4 — Spoken coherence is carried acoustically. Assess Coherence (FC) from logical sequencing of ideas, NOT from the density of written connectives (like 'Furthermore', 'Moreover').\n\n"
+            "You are reading a SPEECH-TO-TEXT (ASR) transcript. The raw ASR output lacks punctuation and acoustic prosody.\n"
+            "RULE 1 — PUNCTUATION AMNESTY: The ASR engine strips commas and periods. DO NOT penalise GRA for run-on sentences. Assume correct phrasing unless structurally broken.\n"
+            "RULE 2 — [FILLER: X] markers are spoken disfluencies. DO NOT penalise GRA or LR for the presence of natural fillers.\n"
+            "RULE 3 — ATTEMPT OVER ACCURACY: Band 7+ candidates WILL make minor mistakes inside complex clauses. Reward RANGE and structural complexity over pure accuracy.\n\n"
             "══════════════════════════════════════════════════════════════════════════\n"
-            " THE INTEGER CONTRACT & ANTI-COMPRESSION LAW:\n"
+            " THE INTEGER CONTRACT (CRITICAL):\n"
             "══════════════════════════════════════════════════════════════════════════\n"
             "1. NO DECIMALS. Scores MUST be WHOLE NUMBERS (1-9).\n"
-            "2. DO NOT compress scores to 5 or 6 out of hesitation. Band 7+ candidates WILL make minor mistakes inside complex clauses. Reward RANGE over pure accuracy.\n"
+            "2. DO NOT compress scores to 5 or 6 out of hesitation. Use 7, 8, 9 confidently for strong vocabulary or complex grammar."
         )
 
         model = genai.GenerativeModel(
-            model_name="models/gemini-3.5-flash",
+            model_name="models/gemini-3-flash-preview",
             generation_config={
                 "response_mime_type": "application/json",
                 "temperature": 0.0
@@ -277,10 +296,9 @@ async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata
             "══════════════════════════════════════════════════════════════════════════════\n"
             " EVALUATION PROTOCOL & QUOTE-FIRST RULE\n"
             "══════════════════════════════════════════════════════════════════════════════\n"
-            "1. DIAGNOSTIC EVIDENCE: For each criterion, find diagnostic evidence. You MUST include POSITIVE STRENGTHS for high scores, not just errors.\n"
-            "2. QUOTE-FIRST: The 'original_quote' field MUST be extracted exactly character-for-character from the transcript. Do not paraphrase.\n"
-            "3. BIDIRECTIONAL JUSTIFICATION: In the 'overallComment', you MUST briefly justify the score by proving why it is not higher and not lower (e.g., 'Scored 7 not 8 because of X; not 6 because of Y').\n"
-            "4. LATENCY OPTIMIZATION: Limit the 'evidences' array to MAXIMUM 2 items per criterion (mix strengths and weaknesses). Keep explanations brief.\n\n"
+            "1. DIAGNOSTIC EVIDENCE: Find diagnostic evidence for Grammar and Lexical features. Include POSITIVE STRENGTHS for high scores, not just errors.\n"
+            "2. QUOTE-FIRST: The 'original_quote' field MUST be extracted exactly character-for-character from the transcript.\n"
+            "3. MAXIMUM EVIDENCES: Limit the 'evidences' array to MAXIMUM 3 items total to optimize latency.\n\n"
             "══════════════════════════════════════════════════════════════════════════════\n"
             " REQUIRED JSON OUTPUT SCHEMA\n"
             "══════════════════════════════════════════════════════════════════════════════\n"
@@ -288,11 +306,9 @@ async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata
             "{\n"
             "  \"grammarScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
             "  \"lexicalScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
-            "  \"fluencyScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
-            "  \"pronunciationScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
             "  \"evidences\": [\n"
             "    {\n"
-            "      \"criterion\": \"[CHOOSE ONE: GRAMMAR, LEXICAL, FLUENCY, PRONUNCIATION]\",\n"
+            "      \"criterion\": \"[CHOOSE ONE: GRAMMAR, LEXICAL]\",\n"
             "      \"testPart\": \"[CHOOSE ONE: PART_1, PART_2, PART_3]\",\n"
             "      \"question\": \"[Question text here]\",\n"
             "      \"original_quote\": \"[Exact verbatim quote here]\",\n"
@@ -301,21 +317,132 @@ async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata
             "      \"explanation\": \"[Pedagogical reasoning]\"\n"
             "    }\n"
             "  ],\n"
-            "  \"overallComment\": \"[Bidirectional Justification: Scored X not X+1 because... Not X-1 because... Summary.]\"\n"
+            "  \"overallComment\": \"[Brief summary justifying the GRA and LR scores]\"\n"
             "}\n"
         )
 
-        response = await model.generate_content_async(prompt)
+        async def do_call():
+            return await model.generate_content_async(prompt)
+            
+        response = await call_gemini_with_retry(do_call)
         text_content = response.text
         
         # Parse the JSON string
         try:
             result_dict = json.loads(text_content)
         except Exception as json_err:
-            logger.warning("[GEMINI EVALUATOR] Standard json.loads failed, trying regex fallback parser: %s", str(json_err))
+            logger.warning("[GEMINI EVALUATOR - TEXT TRACK] Standard json.loads failed, trying regex fallback parser: %s", str(json_err))
             import re
             scores = {}
-            for field in ["pronunciationScore", "fluencyScore", "lexicalScore", "grammarScore"]:
+            for field in ["grammarScore", "lexicalScore"]:
+                match = re.search(rf'"{field}"\s*:\s*(\d+)', text_content)
+                if match:
+                    scores[field] = int(match.group(1))
+                else:
+                    scores[field] = 0
+            
+            if all(scores[field] >= 1 for field in scores):
+                result_dict = {
+                    "grammarScore": scores["grammarScore"],
+                    "lexicalScore": scores["lexicalScore"],
+                    "evidences": [],
+                    "overallComment": f"Partial parse successful (JSON repair). Original parsing error: {str(json_err)}"
+                }
+            else:
+                raise json_err
+
+        logger.info("[GEMINI EVALUATOR - TEXT TRACK] Successfully generated speaking evaluation from Gemini.")
+        return result_dict
+
+    except Exception as e:
+        logger.error("[GEMINI EVALUATOR - TEXT TRACK] Error during Gemini generate content or JSON parsing: %s", str(e))
+        return {
+            "grammarScore": 0,
+            "lexicalScore": 0,
+            "evidences": [],
+            "overallComment": f"Failed to perform speaking evaluation due to an error: {str(e)}"
+        }
+
+
+async def evaluate_pr_fc_audio(audio_contents: bytes, audio_content_type: str, api_key: str) -> dict:
+    """
+    Evaluates Pronunciation (PR) and Fluency & Coherence (FC) directly from the raw audio file.
+    """
+    logger.info("[GEMINI EVALUATOR - AUDIO TRACK] Initiating Gemini evaluation call...")
+    try:
+        genai.configure(api_key=api_key)
+        
+        system_prompt = (
+            "You are a Senior IELTS Speaking Examiner certified by Cambridge Assessment English.\n"
+            "YOUR STRICT SCOPE: You are evaluating PRONUNCIATION (PR) and FLUENCY & COHERENCE (FC) ONLY by actively listening to the provided audio.\n"
+            "DO NOT evaluate Grammar or Lexical Resource. Those are handled by a separate text engine.\n\n"
+            "══════════════════════════════════════════════════════════════════════════\n"
+            " ACOUSTIC EVALUATION RULES (NON-NEGOTIABLE)\n"
+            "══════════════════════════════════════════════════════════════════════════\n"
+            "RULE 1 — PRONUNCIATION: Listen for phoneme clarity, word stress, sentence stress, and intonation. Accent is fine as long as it does not impede intelligibility.\n"
+            "RULE 2 — FLUENCY: Listen for speech rate, natural rhythm, and hesitations. Natural cognitive pauses are acceptable. Only penalize long, disruptive, language-related pauses.\n"
+            "RULE 3 — NO TRANSCRIPT NEEDED: Base your judgment entirely on the acoustic qualities of the voice.\n\n"
+            "══════════════════════════════════════════════════════════════════════════\n"
+            " THE INTEGER CONTRACT (CRITICAL):\n"
+            "══════════════════════════════════════════════════════════════════════════\n"
+            "1. NO DECIMALS. Scores MUST be WHOLE NUMBERS (1-9).\n"
+            "2. DO NOT compress scores to 5 or 6 out of hesitation. Use 7, 8, 9 confidently for smooth, intelligible speech."
+        )
+
+        model = genai.GenerativeModel(
+            model_name="models/gemini-3-flash-preview",
+            generation_config={
+                "response_mime_type": "application/json",
+                "temperature": 0.0
+            },
+            system_instruction=system_prompt
+        )
+
+        prompt_text = (
+            "Listen to the attached audio file of the student's IELTS Speaking response.\n\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            " REQUIRED JSON OUTPUT SCHEMA\n"
+            "══════════════════════════════════════════════════════════════════════════════\n"
+            "Evaluate the acoustic response. You MUST output a JSON object matching this schema exactly:\n"
+            "{\n"
+            "  \"pronunciationScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"fluencyScore\": [INSERT_INTEGER_1_TO_9_HERE],\n"
+            "  \"evidences\": [\n"
+            "    {\n"
+            "      \"criterion\": \"[CHOOSE ONE: PRONUNCIATION, FLUENCY]\",\n"
+            "      \"testPart\": \"[CHOOSE ONE: PART_1, PART_2, PART_3]\",\n"
+            "      \"question\": \"General Audio Assessment\",\n"
+            "      \"original_quote\": \"[Describe the approximate timestamp or the spoken phrase where the issue/strength occurred]\",\n"
+            "      \"error\": \"[Explain the acoustic mistake, OR describe the positive acoustic strength]\",\n"
+            "      \"correction\": \"[Correction, OR write 'N/A']\",\n"
+            "      \"explanation\": \"[Acoustic/Phonetic reasoning]\"\n"
+            "    }\n"
+            "  ],\n"
+            "  \"overallComment\": \"[Brief summary justifying the PR and FC scores based on rhythm, stress, and clarity]\"\n"
+            "}\n"
+        )
+
+        # Format the audio for Gemini multimodal input
+        audio_part = {
+            "mime_type": audio_content_type if audio_content_type else "audio/mpeg",
+            "data": audio_contents
+        }
+
+        # Pass BOTH the audio blob and the text prompt in a list
+        async def do_call():
+            return await model.generate_content_async([audio_part, prompt_text])
+            
+        response = await call_gemini_with_retry(do_call)
+        text_content = response.text
+        
+        # Parse the JSON string
+        try:
+            result_dict = json.loads(text_content)
+        except Exception as json_err:
+            logger.warning("[GEMINI EVALUATOR - AUDIO TRACK] Standard json.loads failed, trying regex fallback parser: %s", str(json_err))
+            import re
+            scores = {}
+            for field in ["pronunciationScore", "fluencyScore"]:
                 match = re.search(rf'"{field}"\s*:\s*(\d+)', text_content)
                 if match:
                     scores[field] = int(match.group(1))
@@ -326,28 +453,40 @@ async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata
                 result_dict = {
                     "pronunciationScore": scores["pronunciationScore"],
                     "fluencyScore": scores["fluencyScore"],
-                    "lexicalScore": scores["lexicalScore"],
-                    "grammarScore": scores["grammarScore"],
                     "evidences": [],
                     "overallComment": f"Partial parse successful (JSON repair). Original parsing error: {str(json_err)}"
                 }
             else:
                 raise json_err
 
-        logger.info("[GEMINI EVALUATOR] Successfully generated speaking evaluation from Gemini.")
+        logger.info("[GEMINI EVALUATOR - AUDIO TRACK] Successfully generated speaking evaluation from Gemini.")
         return result_dict
 
     except Exception as e:
-        logger.error("[GEMINI EVALUATOR] Error during Gemini generate content or JSON parsing: %s", str(e))
-        # Return a safe fallback dictionary
+        logger.error("[GEMINI EVALUATOR - AUDIO TRACK] Error during Gemini generate content or JSON parsing: %s", str(e))
         return {
             "pronunciationScore": 0,
             "fluencyScore": 0,
-            "lexicalScore": 0,
-            "grammarScore": 0,
             "evidences": [],
             "overallComment": f"Failed to perform speaking evaluation due to an error: {str(e)}"
         }
+
+
+async def evaluate_speaking_gemini(annotated_transcript: str, questions_metadata: str, api_key: str) -> dict:
+    """
+    Wrapper for backward compatibility. Calls evaluate_gra_lr_text and injects default
+    scores for pronunciation and fluency to maintain legacy contract.
+    """
+    logger.info("[GEMINI EVALUATOR] Calling evaluate_gra_lr_text via compatibility wrapper...")
+    result_dict = await evaluate_gra_lr_text(annotated_transcript, questions_metadata, api_key)
+    
+    # Inject default values for pronunciation and fluency if not present (or if 0 due to error)
+    if "pronunciationScore" not in result_dict:
+        result_dict["pronunciationScore"] = 5 if result_dict.get("grammarScore", 0) > 0 else 0
+    if "fluencyScore" not in result_dict:
+        result_dict["fluencyScore"] = 5 if result_dict.get("grammarScore", 0) > 0 else 0
+        
+    return result_dict
 
 
 async def process_speaking_evaluation_task(
@@ -363,79 +502,91 @@ async def process_speaking_evaluation_task(
     logger.info("[ORCHESTRATOR] Starting speaking evaluation task for session_id=%s, file=%s", session_id, filename)
     
     annotated_transcript = ""
-    gemini_result_dict = {}
     status_flag = "SUCCESS"
-    overall_comment = ""
     
-    # Step 1: Whisper STT Transcription
-    try:
-        annotated_transcript = await transcribe_audio_whisper(
-            filename=filename,
-            contents=contents,
-            content_type=content_type,
-            api_key=groq_api_key
-        )
-    except Exception as e:
-        logger.error("[ORCHESTRATOR] Whisper transcription failed: %s", str(e))
-        status_flag = "SYSTEM_ERROR"
-        annotated_transcript = ""
-        
-    # Step 2: Gemini LLM Evaluation (Only if Whisper succeeded)
-    if status_flag == "SUCCESS":
+    # Track 1 text execution helper
+    async def run_text_track():
         try:
-            gemini_result_dict = await evaluate_speaking_gemini(
-                annotated_transcript=annotated_transcript,
-                questions_metadata=questions_metadata,
-                api_key=gemini_api_key
-            )
-            # If the call returned the fallback dict representing an error, update status_flag
-            if gemini_result_dict.get("pronunciationScore") == 0 and "Failed" in gemini_result_dict.get("overallComment", ""):
-                status_flag = "LLM_ERROR"
-                overall_comment = gemini_result_dict.get("overallComment", "")
-            else:
-                overall_comment = gemini_result_dict.get("overallComment", "")
+            transcript = await transcribe_audio_whisper(filename, contents, content_type, groq_api_key)
+            if not transcript or "failed" in transcript.lower():
+                return {"grammarScore": 0, "lexicalScore": 0, "evidences": [], "overallComment": "STT failed."}, ""
+            eval_res = await evaluate_gra_lr_text(transcript, questions_metadata, gemini_api_key)
+            return eval_res, transcript
         except Exception as e:
-            logger.error("[ORCHESTRATOR] Gemini evaluation failed: %s", str(e))
-            status_flag = "LLM_ERROR"
-            overall_comment = f"Speaking evaluation failed due to LLM error: {str(e)}"
-            
-    # Step 3: DTO Mapping & Status Handling
-    mapped_evidences = []
-    if status_flag == "SUCCESS":
-        for ev in gemini_result_dict.get("evidences", []):
-            mapped_ev = {
-                "criterion": ev.get("criterion", "GRAMMAR"),
-                "testPart": ev.get("testPart") or ev.get("part", "PART_1"),
-                "part": ev.get("testPart") or ev.get("part", "PART_1"),
-                "question": ev.get("question", ""),
-                "original_quote": ev.get("original_quote") or ev.get("quote", ""),
-                "quote": ev.get("original_quote") or ev.get("quote", ""),
-                "error": ev.get("error") or ev.get("error_type", ""),
-                "error_type": ev.get("error") or ev.get("error_type", ""),
-                "correction": ev.get("correction", ""),
-                "explanation": ev.get("explanation", "")
-            }
-            mapped_evidences.append(mapped_ev)
-            
-        def safe_int(val, default=0):
-            try:
-                return int(float(val)) if val is not None else default
-            except (ValueError, TypeError):
-                return default
+            logger.error(f"[TRACK 1] Error during text processing: {e}")
+            return {"grammarScore": 0, "lexicalScore": 0, "evidences": [], "overallComment": f"Track 1 failed: {str(e)}"}, ""
 
-        pron_score = safe_int(gemini_result_dict.get("pronunciationScore"))
-        flu_score = safe_int(gemini_result_dict.get("fluencyScore"))
-        lex_score = safe_int(gemini_result_dict.get("lexicalScore"))
-        gra_score = safe_int(gemini_result_dict.get("grammarScore"))
+    logger.info("[ORCHESTRATOR] Launching Track 1 (Text) and Track 2 (Audio) concurrently...")
+    
+    try:
+        (text_result, annotated_transcript), audio_result = await asyncio.gather(
+            run_text_track(),
+            evaluate_pr_fc_audio(contents, content_type, gemini_api_key)
+        )
+    except Exception as gather_err:
+        logger.error("[ORCHESTRATOR] Concurrent execution failed: %s", str(gather_err))
+        status_flag = "SYSTEM_ERROR"
+        text_result = {"grammarScore": 0, "lexicalScore": 0, "evidences": [], "overallComment": f"Gather failed: {str(gather_err)}"}
+        audio_result = {"pronunciationScore": 0, "fluencyScore": 0, "evidences": [], "overallComment": f"Gather failed: {str(gather_err)}"}
+        annotated_transcript = ""
+
+    # Merge evidences from both tracks
+    raw_evidences = []
+    if isinstance(text_result, dict) and "evidences" in text_result:
+        raw_evidences.extend(text_result.get("evidences", []))
+    if isinstance(audio_result, dict) and "evidences" in audio_result:
+        raw_evidences.extend(audio_result.get("evidences", []))
+        
+    mapped_evidences = []
+    for ev in raw_evidences:
+        mapped_ev = {
+            "criterion": ev.get("criterion", "GRAMMAR"),
+            "testPart": ev.get("testPart") or ev.get("part", "PART_1"),
+            "part": ev.get("testPart") or ev.get("part", "PART_1"),
+            "question": ev.get("question", ""),
+            "original_quote": ev.get("original_quote") or ev.get("quote", ""),
+            "quote": ev.get("original_quote") or ev.get("quote", ""),
+            "error": ev.get("error") or ev.get("error_type", ""),
+            "error_type": ev.get("error") or ev.get("error_type", ""),
+            "correction": ev.get("correction", ""),
+            "explanation": ev.get("explanation", "")
+        }
+        mapped_evidences.append(mapped_ev)
+        
+    def safe_int(val, default=0):
+        try:
+            return int(float(val)) if val is not None else default
+        except (ValueError, TypeError):
+            return default
+
+    # Extract criteria scores
+    gra_score = safe_int(text_result.get("grammarScore"))
+    lex_score = safe_int(text_result.get("lexicalScore"))
+    pron_score = safe_int(audio_result.get("pronunciationScore"))
+    flu_score = safe_int(audio_result.get("fluencyScore"))
+    
+    # Update status flag based on grading integrity
+    if status_flag == "SUCCESS":
+        if gra_score == 0 or lex_score == 0 or pron_score == 0 or flu_score == 0:
+            status_flag = "LLM_ERROR"
+
+    # Consolidate overall comment feedback
+    text_comment = text_result.get("overallComment", "") if isinstance(text_result, dict) else ""
+    audio_comment = audio_result.get("overallComment", "") if isinstance(audio_result, dict) else ""
+    
+    if status_flag == "SUCCESS":
+        overall_comment = (
+            f"Grammar & Lexical Feedback: {text_comment}\n\n"
+            f"Pronunciation & Fluency Feedback: {audio_comment}"
+        )
     else:
-        pron_score = 0
-        flu_score = 0
-        lex_score = 0
-        gra_score = 0
-        overall_comment = f"[CRITICAL SYSTEM ERROR] Groq/Gemini connectivity failed. Please re-queue this session. (Status: {status_flag})"
+        overall_comment = (
+            f"[CRITICAL SYSTEM ERROR] Groq/Gemini evaluation incomplete. (Status: {status_flag})\n"
+            f"Text Track Comment: {text_comment}\n"
+            f"Audio Track Comment: {audio_comment}"
+        )
 
     payload = {
-        # User requested fields
         "sessionId": session_id,
         "pronunciationScore": pron_score,
         "fluencyScore": flu_score,
@@ -446,7 +597,6 @@ async def process_speaking_evaluation_task(
         "overallComment": overall_comment,
         "status": status_flag,
 
-        # Snake_case and Spring Boot record mappings compatibility
         "session_id": session_id,
         "pronunciation_score": pron_score,
         "fluency_score": flu_score,
@@ -512,23 +662,37 @@ async def mock_speaking_analyze(
     )
 
     try:
-        # ─── PHASE 1: STT (Groq Whisper-large-v3) ───
-        annotated_transcript = await transcribe_audio_whisper(
-            filename=file.filename,
-            contents=contents,
-            content_type=file.content_type or "audio/mpeg",
-            api_key=groq_key
+        # Helper task for text evaluation
+        async def run_text_track():
+            transcript = await transcribe_audio_whisper(
+                filename=file.filename,
+                contents=contents,
+                content_type=file.content_type or "audio/mpeg",
+                api_key=groq_key
+            )
+            eval_res = await evaluate_gra_lr_text(
+                annotated_transcript=transcript,
+                questions_metadata=questions_metadata,
+                api_key=gemini_key
+            )
+            return eval_res, transcript
+
+        logger.info("[SPEAKING SERVICE] Launching Track 1 (Text) and Track 2 (Audio) concurrently...")
+        (text_result, annotated_transcript), audio_result = await asyncio.gather(
+            run_text_track(),
+            evaluate_pr_fc_audio(
+                audio_contents=contents,
+                audio_content_type=file.content_type or "audio/mpeg",
+                api_key=gemini_key
+            )
         )
 
-        logger.info(f"[SPEAKING SERVICE] Transcript generated: {annotated_transcript[:200]}...")
-
-        # ─── PHASE 2: LLM Evaluation (Gemini 1.5 Flash) ───
-        logger.info("[SPEAKING SERVICE] Initializing Gemini 1.5 Flash evaluation call...")
-        gemini_result_dict = await evaluate_speaking_gemini(
-            annotated_transcript=annotated_transcript,
-            questions_metadata=questions_metadata,
-            api_key=gemini_key
-        )
+        # Merge evidences
+        raw_evidences = []
+        if isinstance(text_result, dict) and "evidences" in text_result:
+            raw_evidences.extend(text_result.get("evidences", []))
+        if isinstance(audio_result, dict) and "evidences" in audio_result:
+            raw_evidences.extend(audio_result.get("evidences", []))
 
         evidences = [
             SpeakingEvidence(
@@ -540,7 +704,7 @@ async def mock_speaking_analyze(
                 correction=e.get("correction", ""),
                 explanation=e.get("explanation", "")
             )
-            for e in gemini_result_dict.get("evidences", [])
+            for e in raw_evidences
         ]
 
         def safe_int(val, default=0):
@@ -549,15 +713,32 @@ async def mock_speaking_analyze(
             except (ValueError, TypeError):
                 return default
 
+        pron_score = safe_int(audio_result.get("pronunciationScore"))
+        flu_score = safe_int(audio_result.get("fluencyScore"))
+        lex_score = safe_int(text_result.get("lexicalScore"))
+        gra_score = safe_int(text_result.get("grammarScore"))
+
+        if pron_score == 0 or flu_score == 0 or lex_score == 0 or gra_score == 0:
+            raise Exception(
+                f"Evaluation scores incomplete (PR={pron_score}, FC={flu_score}, LR={lex_score}, GRA={gra_score})."
+            )
+
+        text_comment = text_result.get("overallComment", "")
+        audio_comment = audio_result.get("overallComment", "")
+        combined_comment = (
+            f"Grammar & Lexical Feedback: {text_comment}\n\n"
+            f"Pronunciation & Fluency Feedback: {audio_comment}"
+        )
+
         result = SpeakingAnalysisResult(
             session_id=session_id,
-            pronunciation_score=float(safe_int(gemini_result_dict.get("pronunciationScore"))),
-            fluency_score=float(safe_int(gemini_result_dict.get("fluencyScore"))),
-            lexical_score=float(safe_int(gemini_result_dict.get("lexicalScore"))),
-            grammar_score=float(safe_int(gemini_result_dict.get("grammarScore"))),
+            pronunciation_score=float(pron_score),
+            fluency_score=float(flu_score),
+            lexical_score=float(lex_score),
+            grammar_score=float(gra_score),
             evidences=evidences,
             self_corrections=[],
-            feedback_text=gemini_result_dict.get("overallComment", "")
+            feedback_text=combined_comment
         )
 
         logger.info(f"[SPEAKING SERVICE] Evaluation generated successfully for session_id='{session_id}'")
