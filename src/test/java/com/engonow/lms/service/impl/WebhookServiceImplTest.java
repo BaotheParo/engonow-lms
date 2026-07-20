@@ -4,11 +4,13 @@ import com.engonow.lms.dto.SpeakingEvidenceDTO;
 import com.engonow.lms.dto.SpeakingWebhookPayload;
 import com.engonow.lms.entity.MockTestBooking;
 import com.engonow.lms.entity.SpeakingSessionResult;
+import com.engonow.lms.enums.SpeakingEvaluationStatus;
 import com.engonow.lms.mapper.SpeakingMapper;
 import com.engonow.lms.repository.MockTestBookingRepository;
 import com.engonow.lms.repository.SpeakingSessionResultRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
@@ -54,6 +56,40 @@ public class WebhookServiceImplTest {
             new SpeakingEvidenceDTO("FLUENCY", "PART_1", "Q1", "Quote 1", "Error 1", "Corr 1", "Expl 1"),
             new SpeakingEvidenceDTO("FLUENCY", "PART_1", "Q2", "Quote 2", "Error 2", "Corr 2", "Expl 2")
     );
+
+    @Test
+    public void testPartialSuccessLowAudioConfidenceIsPersistedWithScores() {
+        String sessionId = "456";
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7),
+                BigDecimal.valueOf(7),
+                BigDecimal.valueOf(7),
+                BigDecimal.valueOf(7),
+                EVIDENCES_WITH_MINIMUM_REQUIRED_COUNT,
+                Collections.emptyList(),
+                "Pronunciation score is for reference only.",
+                SpeakingEvaluationStatus.PARTIAL_SUCCESS_LOW_AUDIO_CONF
+        );
+        MockTestBooking booking = new MockTestBooking();
+        booking.setId(456L);
+        SpeakingSessionResult resultEntity = new SpeakingSessionResult();
+        resultEntity.setSessionId(sessionId);
+
+        when(speakingSessionResultRepository.findBySessionId(sessionId)).thenReturn(Optional.empty());
+        when(mockTestBookingRepository.findById(456L)).thenReturn(Optional.of(booking));
+        when(speakingMapper.toEntity(payload)).thenReturn(resultEntity);
+        when(speakingSessionResultRepository.save(any(SpeakingSessionResult.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        webhookService.handleAiSpeakingCallback(payload);
+
+        assertEquals(
+                SpeakingEvaluationStatus.PARTIAL_SUCCESS_LOW_AUDIO_CONF,
+                resultEntity.getEvaluationStatus()
+        );
+        assertEquals(0, BigDecimal.valueOf(7).compareTo(resultEntity.getPronunciationScore()));
+    }
 
     /**
      * Helper method to assert the scoring output.

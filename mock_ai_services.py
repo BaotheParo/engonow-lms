@@ -24,7 +24,14 @@ import asyncio
 import logging
 import httpx
 import json
+import math
 import google.generativeai as genai
+from acoustic_engine import (
+    AcousticScore,
+    INVALID_WORD_PROBABILITY_MAX,
+    is_nonlexical_filler,
+    score_acoustic,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -121,7 +128,9 @@ async def mock_omr_scan(
     logger.info("[OMR SERVICE] Extraction complete. Returning %d answers for exam_id=%d.", len(results), exam_id)
     return results
 
-async def transcribe_audio_whisper(filename: str, contents: bytes, content_type: str, api_key: str) -> str:
+async def transcribe_audio_whisper(
+    filename: str, contents: bytes, content_type: str, api_key: str
+) -> tuple[str, float]:
     """
     Transcribes audio using Groq Whisper-large-v3 with verbose_json, temperature=0,
     and inserts pause markers and low confidence indicators based on timestamps and log probabilities.
@@ -169,11 +178,13 @@ async def transcribe_audio_whisper(filename: str, contents: bytes, content_type:
                 avg_logprob = segment.get("avg_logprob")
                 seg_words = segment.get("words", [])
                 for sw in seg_words:
+                    word_logprob = sw.get("logprob")
                     words.append({
                         "word": sw.get("word"),
                         "start": float(sw.get("start", 0.0)),
                         "end": float(sw.get("end", 0.0)),
-                        "logprob": sw.get("logprob") if sw.get("logprob") is not None else avg_logprob
+                        "logprob": word_logprob if word_logprob is not None else avg_logprob,
+                        "has_genuine_confidence": word_logprob is not None,
                     })
 
         # Fallback to flat top-level words array if segments nested words are not present
@@ -183,14 +194,15 @@ async def transcribe_audio_whisper(filename: str, contents: bytes, content_type:
                     "word": rw.get("word"),
                     "start": float(rw.get("start", 0.0)),
                     "end": float(rw.get("end", 0.0)),
-                    "logprob": rw.get("logprob")
+                    "logprob": rw.get("logprob"),
+                    "probability": rw.get("probability"),
                 })
 
         # Aggregate transcript and inject tags
         if not words:
             text = stt_json.get("text", "")
             logger.info("[WHISPER STT] No word timestamps found. Returning raw text.")
-            return text
+            return text, 0.0
 
         annotated_tokens = []
         pauses_count = 0
@@ -210,7 +222,10 @@ async def transcribe_audio_whisper(filename: str, contents: bytes, content_type:
                     annotated_tokens.append(f"[pause: {gap:.1f}s]")
                     pauses_count += 1
 
-            annotated_tokens.append(word_str)
+            if is_nonlexical_filler(word_str):
+                annotated_tokens.append(f"[FILLER: {word_str}]")
+            else:
+                annotated_tokens.append(word_str)
 
             # Check pronunciation confidence logprob threshold < -0.5
             if logprob is not None:
@@ -222,18 +237,43 @@ async def transcribe_audio_whisper(filename: str, contents: bytes, content_type:
                     pass
 
         annotated_transcript = " ".join(annotated_tokens)
-        # SOLUTION A: FILLER BRACKETING
-        filler_pattern = re.compile(r'\b(um|uh|er|ah|like|you know|i mean)\b', re.IGNORECASE)
-        annotated_transcript = filler_pattern.sub(r'[FILLER: \1]', annotated_transcript)
+        genuine_confidence_count = 0
+        for confidence_word in words:
+            try:
+                probability = float(confidence_word.get("probability"))
+            except (TypeError, ValueError):
+                probability = None
+            try:
+                word_logprob = float(confidence_word.get("logprob"))
+            except (TypeError, ValueError):
+                word_logprob = None
+            probability_is_genuine = (
+                probability is not None
+                and math.isfinite(probability)
+                and INVALID_WORD_PROBABILITY_MAX < probability <= 1.0
+            )
+            logprob_is_genuine = (
+                confidence_word.get("has_genuine_confidence", True)
+                and word_logprob is not None
+                and math.isfinite(word_logprob)
+            )
+            if probability_is_genuine or logprob_is_genuine:
+                genuine_confidence_count += 1
+        confidence_word_count = len(words)
+        genuine_confidence_coverage = (
+            genuine_confidence_count / confidence_word_count
+            if confidence_word_count
+            else 0.0
+        )
         logger.info(
             "[WHISPER STT] Completed. Injected %d pause markers and %d [LOW_CONFIDENCE] tags.",
             pauses_count, low_conf_count
         )
-        return annotated_transcript
+        return annotated_transcript, genuine_confidence_coverage
 
     except Exception as e:
         logger.error("[WHISPER STT] Error parsing timestamps or logging metadata: %s", str(e))
-        return stt_json.get("text", "")
+        return stt_json.get("text", ""), 0.0
 
 
 async def call_gemini_with_retry(func, *args, **kwargs):
@@ -507,19 +547,29 @@ async def process_speaking_evaluation_task(
     # Track 1 text execution helper
     async def run_text_track():
         try:
-            transcript = await transcribe_audio_whisper(filename, contents, content_type, groq_api_key)
+            transcript, confidence_coverage = await transcribe_audio_whisper(
+                filename, contents, content_type, groq_api_key
+            )
             if not transcript or "failed" in transcript.lower():
-                return {"grammarScore": 0, "lexicalScore": 0, "evidences": [], "overallComment": "STT failed."}, ""
+                return (
+                    {"grammarScore": 0, "lexicalScore": 0, "evidences": [], "overallComment": "STT failed."},
+                    "",
+                    0.0,
+                )
             eval_res = await evaluate_gra_lr_text(transcript, questions_metadata, gemini_api_key)
-            return eval_res, transcript
+            return eval_res, transcript, confidence_coverage
         except Exception as e:
             logger.error(f"[TRACK 1] Error during text processing: {e}")
-            return {"grammarScore": 0, "lexicalScore": 0, "evidences": [], "overallComment": f"Track 1 failed: {str(e)}"}, ""
+            return (
+                {"grammarScore": 0, "lexicalScore": 0, "evidences": [], "overallComment": f"Track 1 failed: {str(e)}"},
+                "",
+                0.0,
+            )
 
     logger.info("[ORCHESTRATOR] Launching Track 1 (Text) and Track 2 (Audio) concurrently...")
     
     try:
-        (text_result, annotated_transcript), audio_result = await asyncio.gather(
+        (text_result, annotated_transcript, confidence_coverage), audio_result = await asyncio.gather(
             run_text_track(),
             evaluate_pr_fc_audio(contents, content_type, gemini_api_key)
         )
@@ -529,6 +579,7 @@ async def process_speaking_evaluation_task(
         text_result = {"grammarScore": 0, "lexicalScore": 0, "evidences": [], "overallComment": f"Gather failed: {str(gather_err)}"}
         audio_result = {"pronunciationScore": 0, "fluencyScore": 0, "evidences": [], "overallComment": f"Gather failed: {str(gather_err)}"}
         annotated_transcript = ""
+        confidence_coverage = 0.0
 
     # Merge evidences from both tracks
     raw_evidences = []
@@ -569,16 +620,23 @@ async def process_speaking_evaluation_task(
     if status_flag == "SUCCESS":
         if gra_score == 0 or lex_score == 0 or pron_score == 0 or flu_score == 0:
             status_flag = "LLM_ERROR"
+        elif confidence_coverage < 0.60:
+            status_flag = "PARTIAL_SUCCESS_LOW_AUDIO_CONF"
 
     # Consolidate overall comment feedback
     text_comment = text_result.get("overallComment", "") if isinstance(text_result, dict) else ""
     audio_comment = audio_result.get("overallComment", "") if isinstance(audio_result, dict) else ""
     
-    if status_flag == "SUCCESS":
+    if status_flag in {"SUCCESS", "PARTIAL_SUCCESS_LOW_AUDIO_CONF"}:
         overall_comment = (
             f"Grammar & Lexical Feedback: {text_comment}\n\n"
             f"Pronunciation & Fluency Feedback: {audio_comment}"
         )
+        if status_flag == "PARTIAL_SUCCESS_LOW_AUDIO_CONF":
+            overall_comment += (
+                "\n\nYour recording quality or connection was unstable. "
+                "The pronunciation score is for reference only."
+            )
     else:
         overall_comment = (
             f"[CRITICAL SYSTEM ERROR] Groq/Gemini evaluation incomplete. (Status: {status_flag})\n"
@@ -629,124 +687,133 @@ async def process_speaking_evaluation_task(
 
 @app.post(
     "/api/v1/ai/speaking-analyze",
-    response_model=SpeakingAnalysisResult,
-    summary="AI IELTS Speaking Analyzer (Groq Whisper + Gemini 1.5 Flash)",
+    summary="Hybrid Speaking Analyzer  Acoustic Engine (FC + PR) + LLM (GRA + LR)",
     description=(
-        "Transcribes the student response audio using Groq Whisper, calculates hesitation pauses, "
-        "and evaluates grammar, lexical resource, and fluency against the specific questions using Gemini 1.5 Flash."
+        "Accepts a Whisper verbose_json response payload and scores Fluency (FC) "
+        "and Pronunciation (PR) deterministically via the ENGONOW Acoustic Engine. "
+        "GRA and LR scores are passed in from the separate LLM evaluation track. "
+        "Returns a unified score payload for the Java Spring Boot grading layer."
     ),
 )
-async def mock_speaking_analyze(
-    file: UploadFile = File(..., description="The audio containing ONLY the student's answers"),
-    questions_metadata: str = Form(..., description="JSON string array of the exact questions asked by the Frontend"),
-    session_id: str = Form("mock-session-123", description="Unique speaking session ID")
+async def speaking_analyze(
+    session_id:            str = Form(..., description="Unique speaking session identifier"),
+    whisper_response_json: str = Form(..., description="Full Groq Whisper verbose_json response as a JSON string"),
+    grammar_score:         int = Form(..., description="GRA score from LLM evaluation (integer 1-9)", ge=1, le=9),
+    lexical_score:         int = Form(..., description="LR score from LLM evaluation (integer 1-9)", ge=1, le=9),
 ):
-    if not questions_metadata.strip():
-        raise HTTPException(status_code=422, detail="questions_metadata must not be blank.")
+    """
+    Acoustic Engine integration endpoint.
 
-    try:
-        metadata_list = json.loads(questions_metadata)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON format in questions_metadata: {str(e)}")
+    FC and PR are computed deterministically from Whisper metadata.
+    GRA and LR are accepted as already-computed LLM outputs (integer 1-9).
+    All four scores are assembled for the Java composite scoring layer.
+    """
+    import json as _json
 
-    groq_key = os.getenv("WHISPER_API_KEY")
-    gemini_key = os.getenv("GEMINI_API_KEY")
-
-    if not groq_key or not gemini_key:
-        raise HTTPException(status_code=500, detail="Missing API keys in .env")
-
-    contents = await file.read()
     logger.info(
-        f"[SPEAKING SERVICE] Analyzing student audio for session_id='{session_id}' | "
-        f"file='{file.filename}' ({len(contents)} bytes) | metadata length={len(metadata_list)}"
+        "[ACOUSTIC ENGINE] Received speaking-analyze request. session_id='%s'", session_id
     )
 
+    #  Parse Whisper response
     try:
-        # Helper task for text evaluation
-        async def run_text_track():
-            transcript = await transcribe_audio_whisper(
-                filename=file.filename,
-                contents=contents,
-                content_type=file.content_type or "audio/mpeg",
-                api_key=groq_key
-            )
-            eval_res = await evaluate_gra_lr_text(
-                annotated_transcript=transcript,
-                questions_metadata=questions_metadata,
-                api_key=gemini_key
-            )
-            return eval_res, transcript
-
-        logger.info("[SPEAKING SERVICE] Launching Track 1 (Text) and Track 2 (Audio) concurrently...")
-        (text_result, annotated_transcript), audio_result = await asyncio.gather(
-            run_text_track(),
-            evaluate_pr_fc_audio(
-                audio_contents=contents,
-                audio_content_type=file.content_type or "audio/mpeg",
-                api_key=gemini_key
-            )
+        whisper_dict = _json.loads(whisper_response_json)
+    except _json.JSONDecodeError as e:
+        logger.error("[ACOUSTIC ENGINE] Failed to parse whisper_response_json: %s", str(e))
+        raise HTTPException(
+            status_code=422,
+            detail=f"whisper_response_json is not valid JSON: {str(e)}"
         )
 
-        # Merge evidences
-        raw_evidences = []
-        if isinstance(text_result, dict) and "evidences" in text_result:
-            raw_evidences.extend(text_result.get("evidences", []))
-        if isinstance(audio_result, dict) and "evidences" in audio_result:
-            raw_evidences.extend(audio_result.get("evidences", []))
+    #  Run Acoustic Engine
+    try:
+        acoustic: AcousticScore = score_acoustic(whisper_dict)
+    except ValueError as e:
+        logger.warning(
+            "[ACOUSTIC ENGINE] Acoustic engine ValueError for session_id='%s': %s  returning default scores",
+            session_id, str(e)
+        )
+        # Default to Band 3 on engine failure (safe fallback  not zero)
+        acoustic = None
 
-        evidences = [
-            SpeakingEvidence(
-                criterion=e.get("criterion", "GRAMMAR"),
-                part=e.get("testPart") or e.get("part", "PART_1"),
-                question=e.get("question", ""),
-                quote=e.get("original_quote") or e.get("quote", ""),
-                error_type=e.get("error") or e.get("error_type", ""),
-                correction=e.get("correction", ""),
-                explanation=e.get("explanation", "")
+    if acoustic is not None:
+        fc_score = acoustic.fc_score
+        pr_score = acoustic.pr_score
+        diagnostics = acoustic.diagnostics
+        warnings = acoustic.warnings
+    else:
+        fc_score = 3
+        pr_score = 3
+        diagnostics = {}
+        warnings = ["ACOUSTIC_ENGINE_FAILED: defaulted to Band 3 for FC and PR"]
+
+    #  Validate all four scores are strict integers 1-9
+    for name, val in [("fc_score", fc_score), ("pr_score", pr_score),
+                      ("grammar_score", grammar_score), ("lexical_score", lexical_score)]:
+        if not isinstance(val, int) or not (1 <= val <= 9):
+            logger.error("[ACOUSTIC ENGINE] Invalid score %s=%r for session_id='%s'", name, val, session_id)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Score validation failed: {name}={val} is not an integer in [1,9]"
             )
-            for e in raw_evidences
+
+    logger.info(
+        "[ACOUSTIC ENGINE] session_id='%s' | FC=%d PR=%d GRA=%d LR=%d",
+        session_id, fc_score, pr_score, grammar_score, lexical_score,
+    )
+
+    return {
+        "session_id":          session_id,
+        "pronunciation_score": pr_score,
+        "fluency_score":       fc_score,
+        "grammar_score":       grammar_score,
+        "lexical_score":       lexical_score,
+        "diagnostics":         diagnostics,
+        "warnings":            warnings,
+    }
+
+
+@app.get("/api/v1/ai/acoustic-health", summary="Acoustic Engine Self-Test")
+async def acoustic_health():
+    """
+    Runs a synthetic fixture through the acoustic engine and returns the result.
+    Used by the Java health-check layer to verify the acoustic engine is functional.
+    """
+    from acoustic_engine import score_acoustic
+
+    synthetic_whisper = {
+        "duration": 20.0,
+        "text": "I believe that technology has changed the way people communicate significantly",
+        "words": [
+            {"word": "I",            "start": 0.10, "end": 0.20, "probability": 0.97},
+            {"word": "believe",      "start": 0.22, "end": 0.58, "probability": 0.89},
+            {"word": "that",         "start": 0.60, "end": 0.80, "probability": 0.94},
+            {"word": "technology",   "start": 0.82, "end": 1.45, "probability": 0.81},
+            {"word": "has",          "start": 1.47, "end": 1.62, "probability": 0.96},
+            {"word": "changed",      "start": 1.64, "end": 2.10, "probability": 0.85},
+            {"word": "the",          "start": 2.12, "end": 2.22, "probability": 0.98},
+            {"word": "way",          "start": 2.24, "end": 2.48, "probability": 0.93},
+            {"word": "people",       "start": 2.50, "end": 2.88, "probability": 0.91},
+            {"word": "communicate",  "start": 2.90, "end": 3.60, "probability": 0.77},
+            {"word": "significantly","start": 4.80, "end": 5.60, "probability": 0.73},
+        ],
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 6.0, "text": "...",
+             "avg_logprob": -0.28, "compression_ratio": 1.6, "no_speech_prob": 0.03}
         ]
+    }
 
-        def safe_int(val, default=0):
-            try:
-                return int(float(val)) if val is not None else default
-            except (ValueError, TypeError):
-                return default
-
-        pron_score = safe_int(audio_result.get("pronunciationScore"))
-        flu_score = safe_int(audio_result.get("fluencyScore"))
-        lex_score = safe_int(text_result.get("lexicalScore"))
-        gra_score = safe_int(text_result.get("grammarScore"))
-
-        if pron_score == 0 or flu_score == 0 or lex_score == 0 or gra_score == 0:
-            raise Exception(
-                f"Evaluation scores incomplete (PR={pron_score}, FC={flu_score}, LR={lex_score}, GRA={gra_score})."
-            )
-
-        text_comment = text_result.get("overallComment", "")
-        audio_comment = audio_result.get("overallComment", "")
-        combined_comment = (
-            f"Grammar & Lexical Feedback: {text_comment}\n\n"
-            f"Pronunciation & Fluency Feedback: {audio_comment}"
-        )
-
-        result = SpeakingAnalysisResult(
-            session_id=session_id,
-            pronunciation_score=float(pron_score),
-            fluency_score=float(flu_score),
-            lexical_score=float(lex_score),
-            grammar_score=float(gra_score),
-            evidences=evidences,
-            self_corrections=[],
-            feedback_text=combined_comment
-        )
-
-        logger.info(f"[SPEAKING SERVICE] Evaluation generated successfully for session_id='{session_id}'")
-        return result
-
-    except Exception as e:
-        logger.error(f"[SPEAKING SERVICE] API call failure: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"AI Pipeline Failed: {str(e)}")
+    result = score_acoustic(synthetic_whisper)
+    return {
+        "status": "UP",
+        "engine": "ENGONOW Acoustic Assessment Engine v1.0",
+        "synthetic_test": {
+            "fc_score": result.fc_score,
+            "pr_score": result.pr_score,
+            "fc_raw":   round(result.fc_raw, 4),
+            "pr_raw":   round(result.pr_raw, 4),
+            "warnings": result.warnings,
+        }
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────────

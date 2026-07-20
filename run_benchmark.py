@@ -5,12 +5,13 @@ load_dotenv()
 import asyncio
 import json
 import logging
+from acoustic_engine import is_nonlexical_filler
 import math
-import os
 import time
 import random
 import httpx
-from mock_ai_services import app
+import sys
+from mock_ai_services import app, evaluate_gra_lr_text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("benchmark")
@@ -38,18 +39,112 @@ def round_cambridge(avg_val):
     else:
         return float(floor + 1.0)
 
+async def get_whisper_data_and_transcript(filename: str, contents: bytes, content_type: str, api_key: str):
+    """
+    Transcribes audio using Groq Whisper-large-v3, returns raw verbose_json dict and annotated transcript.
+    """
+    logger.info(f"[WHISPER STT] Calling Groq Whisper for {filename}...")
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+    files = {
+        "file": (filename, contents, content_type)
+    }
+    data = {
+        "model": "whisper-large-v3",
+        "response_format": "verbose_json",
+        "temperature": "0.0",
+        "timestamp_granularities[]": "word",
+        "prompt": "Verbatim transcript. Keep every stutter, broken sentence, filler word, and grammar mistake exactly as spoken."
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        stt_response = await client.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers=headers,
+            files=files,
+            data=data
+        )
+
+    if stt_response.status_code != 200:
+        raise Exception(f"Groq API error: {stt_response.status_code} - {stt_response.text}")
+
+    stt_json = stt_response.json()
+    words = []
+    raw_words = stt_json.get("words")
+    segments = stt_json.get("segments", [])
+
+    if segments:
+        for segment in segments:
+            avg_logprob = segment.get("avg_logprob")
+            seg_words = segment.get("words", [])
+            for sw in seg_words:
+                words.append({
+                    "word": sw.get("word"),
+                    "start": float(sw.get("start", 0.0)),
+                    "end": float(sw.get("end", 0.0)),
+                    "logprob": sw.get("logprob") if sw.get("logprob") is not None else avg_logprob
+                })
+
+    if not words and raw_words:
+        for rw in raw_words:
+            words.append({
+                "word": rw.get("word"),
+                "start": float(rw.get("start", 0.0)),
+                "end": float(rw.get("end", 0.0)),
+                "logprob": rw.get("logprob")
+            })
+
+    if not words:
+        return stt_json, stt_json.get("text", "")
+
+    annotated_tokens = []
+    for i, w in enumerate(words):
+        word_str = w.get("word", "").strip()
+        start = w.get("start", 0.0)
+        end = w.get("end", 0.0)
+        logprob = w.get("logprob")
+
+        if i > 0:
+            prev_end = words[i - 1].get("end", 0.0)
+            gap = float(start) - float(prev_end)
+            if gap > 1.5:
+                annotated_tokens.append(f"[pause: {gap:.1f}s]")
+
+        if is_nonlexical_filler(word_str):
+            annotated_tokens.append(f"[FILLER: {word_str}]")
+        else:
+            annotated_tokens.append(word_str)
+
+        if logprob is not None:
+            try:
+                if float(logprob) < -0.5:
+                    annotated_tokens.append("[LOW_CONFIDENCE]")
+            except (ValueError, TypeError):
+                pass
+
+    annotated_transcript = " ".join(annotated_tokens)
+
+    return stt_json, annotated_transcript
+
 async def run_benchmark():
     logger.info("======================================================================")
     logger.info("Starting Refactored IELTS Speaking Pipeline Accuracy & Variance Benchmark")
     logger.info("======================================================================")
-    
+
+    groq_key = os.getenv("WHISPER_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+
+    if not groq_key or not gemini_key:
+        logger.error("[BENCHMARK] Missing WHISPER_API_KEY or GEMINI_API_KEY in .env file. Exiting...")
+        sys.exit(1)
+
     server_process = None
     server_log = None
     try:
         # Start uvicorn server in a separate process to avoid event loop deadlock
         logger.info("[BENCHMARK] Starting local Uvicorn server task on 127.0.0.1:8001...")
         import subprocess
-        import sys
         server_log = open("uvicorn.log", "w", encoding="utf-8")
         server_process = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "mock_ai_services:app", "--host", "127.0.0.1", "--port", "8001"],
@@ -74,59 +169,90 @@ async def run_benchmark():
                     logger.info(f"[BENCHMARK] Running iteration {iteration}/3 for '{filename}'...")
                     
                     with open(filename, "rb") as f:
-                        files = {"file": (filename, f, "audio/mpeg")}
-                        data = {
-                            "questions_metadata": json.dumps([
-                                {"question": "Describe a person you know who likes to cook for other people.", "part": "PART_2"},
-                                {"question": "Should children be taught cooking skills from a young age?", "part": "PART_3"}
-                            ]),
-                            "session_id": f"benchmark-{filename}-{iteration}-{int(time.time())}"
-                        }
-                        
-                        # Async latency timer wrapping the complete API post execution
-                        start_time = time.time()
-                        try:
-                            response = await client.post("/api/v1/ai/speaking-analyze", files=files, data=data)
-                            end_time = time.time()
-                            latency = end_time - start_time
-                            
-                            if response.status_code != 200:
-                                logger.error(f"[BENCHMARK] Iteration {iteration} failed with status {response.status_code}: {response.text}")
-                                continue
-                                
-                            res_json = response.json()
-                            
-                            # Safe casting approach to enforce INTEGER values for all 4 sub-scores
-                            def to_int(val, default=0):
-                                try:
-                                    return int(float(val)) if val is not None else default
-                                except (ValueError, TypeError):
-                                    return default
+                        contents = f.read()
 
-                            pr = to_int(res_json.get("pronunciation_score") or res_json.get("pronunciationScore"))
-                            fc = to_int(res_json.get("fluency_score") or res_json.get("fluencyScore"))
-                            lr = to_int(res_json.get("lexical_score") or res_json.get("lexicalScore"))
-                            gra = to_int(res_json.get("grammar_score") or res_json.get("grammarScore"))
-                            
-                            # Round the criteria using IELTS round formula
-                            criteria_avg = (pr + fc + lr + gra) / 4.0
-                            overall = round_cambridge(criteria_avg)
-                            
-                            file_runs.append({
-                                "pr": pr,
-                                "fc": fc,
-                                "lr": lr,
-                                "gra": gra,
-                                "overall": overall,
-                                "latency": latency
-                            })
-                            logger.info(
-                                f"[BENCHMARK] Iteration {iteration} completed in {latency:.2f}s. "
-                                f"Scores (Integers): PR={pr}, FC={fc}, LR={lr}, GRA={gra} -> Holistic: {overall}"
-                            )
-                        except Exception as it_err:
-                            logger.error(f"[BENCHMARK] Iteration {iteration} request failed: {it_err}")
+                    questions_metadata_str = json.dumps([
+                        {"question": "Describe a person you know who likes to cook for other people.", "part": "PART_2"},
+                        {"question": "Should children be taught cooking skills from a young age?", "part": "PART_3"}
+                    ])
+
+                    start_time = time.time()
+                    try:
+                        # 1. Transcribe audio to Whisper raw json and annotated transcript
+                        stt_json, annotated_transcript = await get_whisper_data_and_transcript(
+                            filename, contents, "audio/mpeg", groq_key
+                        )
+                    except Exception as whisper_err:
+                        logger.error(f"[BENCHMARK] Groq Whisper transcription failed: {whisper_err}")
+                        continue
+
+                    try:
+                        # 2. Evaluate grammar and lexical resource using Gemini
+                        text_result = await evaluate_gra_lr_text(
+                            annotated_transcript, questions_metadata_str, gemini_key
+                        )
+                    except Exception as gemini_err:
+                        err_msg = str(gemini_err)
+                        is_rate_limit = "429" in err_msg or "ResourceExhausted" in err_msg or "quota" in err_msg.lower()
+                        if is_rate_limit:
+                            logger.error(f"\n[CRITICAL RATE LIMIT] Gemini rate limit hit during text evaluation: {err_msg}")
+                            logger.error("Exiting benchmark immediately as requested.\n")
+                            if server_process:
+                                server_process.terminate()
+                                server_process.wait()
+                            sys.exit(1)
+                        else:
+                            logger.error(f"[BENCHMARK] Gemini evaluation failed: {gemini_err}")
                             continue
+
+                    # 3. Call local acoustic speaking-analyze endpoint
+                    data = {
+                        "session_id": f"benchmark-{filename}-{iteration}-{int(time.time())}",
+                        "whisper_response_json": json.dumps(stt_json),
+                        "grammar_score": int(text_result.get("grammarScore", 5)),
+                        "lexical_score": int(text_result.get("lexicalScore", 5))
+                    }
+
+                    try:
+                        response = await client.post("/api/v1/ai/speaking-analyze", data=data)
+                        end_time = time.time()
+                        latency = end_time - start_time
+                        
+                        if response.status_code != 200:
+                            logger.error(f"[BENCHMARK] Iteration {iteration} endpoint failed with status {response.status_code}: {response.text}")
+                            continue
+                            
+                        res_json = response.json()
+                        
+                        def to_int(val, default=0):
+                            try:
+                                return int(float(val)) if val is not None else default
+                            except (ValueError, TypeError):
+                                return default
+
+                        pr = to_int(res_json.get("pronunciation_score"))
+                        fc = to_int(res_json.get("fluency_score"))
+                        lr = to_int(res_json.get("lexical_score"))
+                        gra = to_int(res_json.get("grammar_score"))
+                        
+                        criteria_avg = (pr + fc + lr + gra) / 4.0
+                        overall = round_cambridge(criteria_avg)
+                        
+                        file_runs.append({
+                            "pr": pr,
+                            "fc": fc,
+                            "lr": lr,
+                            "gra": gra,
+                            "overall": overall,
+                            "latency": latency
+                        })
+                        logger.info(
+                            f"[BENCHMARK] Iteration {iteration} completed in {latency:.2f}s. "
+                            f"Scores (Integers): PR={pr}, FC={fc}, LR={lr}, GRA={gra} -> Holistic: {overall}"
+                        )
+                    except Exception as it_err:
+                        logger.error(f"[BENCHMARK] Iteration {iteration} request failed: {it_err}")
+                        continue
 
                     # Rate Limit Protection: Sleep 15s after each iteration
                     logger.info("[BENCHMARK] Rate Limit Protection: Sleeping 15s before next iteration...")

@@ -1,5 +1,6 @@
 package com.engonow.lms.dto;
 
+import com.engonow.lms.enums.SpeakingEvaluationStatus;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -35,8 +36,33 @@ public record SpeakingWebhookPayload(
 
     @JsonProperty("feedback_text")
     @NotBlank(message = "Feedback text must not be blank")
-    String feedbackText
+    String feedbackText,
+
+    @JsonProperty("status")
+    SpeakingEvaluationStatus status
 ) {
+    public SpeakingWebhookPayload(
+            String sessionId,
+            BigDecimal pronunciationScore,
+            BigDecimal fluencyScore,
+            BigDecimal lexicalScore,
+            BigDecimal grammarScore,
+            List<SpeakingEvidenceDTO> evidences,
+            List<SpeakingSelfCorrectionDTO> selfCorrections,
+            String feedbackText) {
+        this(
+            sessionId,
+            pronunciationScore,
+            fluencyScore,
+            lexicalScore,
+            grammarScore,
+            evidences,
+            selfCorrections,
+            feedbackText,
+            SpeakingEvaluationStatus.SUCCESS
+        );
+    }
+
     public record SpeakingSelfCorrectionDTO(
         String original,
         String marker,

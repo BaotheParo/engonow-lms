@@ -11,6 +11,7 @@ public interface SpeakingMapper {
 
     @Mapping(source = "sessionId", target = "sessionId")
     @Mapping(source = "feedbackText", target = "feedbackText")
+    @Mapping(source = "status", target = "evaluationStatus")
     @Mapping(target = "selfCorrectionsText", ignore = true)
     @Mapping(target = "evidencesText", ignore = true)
     SpeakingSessionResult toEntity(SpeakingWebhookPayload payload);

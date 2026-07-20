@@ -4,6 +4,7 @@ import com.engonow.lms.dto.SpeakingEvidenceDTO;
 import com.engonow.lms.dto.SpeakingWebhookPayload;
 import com.engonow.lms.entity.MockTestBooking;
 import com.engonow.lms.entity.SpeakingSessionResult;
+import com.engonow.lms.enums.SpeakingEvaluationStatus;
 import com.engonow.lms.exception.DuplicateWebhookException;
 import com.engonow.lms.mapper.SpeakingMapper;
 import com.engonow.lms.repository.MockTestBookingRepository;
@@ -54,6 +55,9 @@ public class WebhookServiceImpl implements WebhookService {
 
         // Use SpeakingMapper to populate entity fields from payload (e.g. feedbackText)
         SpeakingSessionResult result = speakingMapper.toEntity(payload);
+        result.setEvaluationStatus(
+                payload.status() != null ? payload.status() : SpeakingEvaluationStatus.SUCCESS
+        );
         result.setBooking(booking);
 
         // --- Business Rule 1: Evidence Filtering & Null-Safety with Regex Boundaries ---

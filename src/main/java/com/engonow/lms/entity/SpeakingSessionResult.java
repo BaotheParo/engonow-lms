@@ -1,5 +1,6 @@
 package com.engonow.lms.entity;
 
+import com.engonow.lms.enums.SpeakingEvaluationStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -68,6 +69,11 @@ public class SpeakingSessionResult extends BaseEntity {
 
     @Column(name = "feedback_text", columnDefinition = "TEXT")
     private String feedbackText;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "evaluation_status", nullable = false, length = 40)
+    private SpeakingEvaluationStatus evaluationStatus = SpeakingEvaluationStatus.SUCCESS;
 
     @Column(name = "self_corrections_text", columnDefinition = "TEXT")
     private String selfCorrectionsText;
