@@ -9,3 +9,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Temporary Benchmark/Log Files
+benchmark_progress.json
+uvicorn.log
+*.log

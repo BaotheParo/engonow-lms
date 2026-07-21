@@ -153,19 +153,39 @@ async def run_benchmark():
         )
         await asyncio.sleep(4.0) # Wait for server to boot up
         
-        results = {}
+        checkpoint_path = "benchmark_progress.json"
+        if os.path.exists(checkpoint_path):
+            try:
+                with open(checkpoint_path, "r", encoding="utf-8") as f:
+                    results = json.load(f)
+                logger.info(f"[BENCHMARK] Loaded progress checkpoint from {checkpoint_path}. Completed files: {list(results.keys())}")
+            except Exception as e:
+                logger.warning(f"[BENCHMARK] Could not load checkpoint: {e}")
+                results = {}
+        else:
+            results = {}
+
         client_creator = lambda: httpx.AsyncClient(base_url="http://127.0.0.1:8001", timeout=240.0)
 
+        rate_limit_triggered = False
         async with client_creator() as client:
             for filename, baseline in BASELINES.items():
+                if rate_limit_triggered:
+                    break
+                if filename in results and len(results[filename]) >= 3:
+                    logger.info(f"[BENCHMARK] File '{filename}' already has 3 completed iterations in checkpoint. Skipping...")
+                    continue
                 if not os.path.exists(filename):
                     logger.error(f"[BENCHMARK] Audio file '{filename}' not found in workspace root. Skipping...")
                     continue
                     
                 logger.info(f"[BENCHMARK] Target: '{filename}' (Human Examiner Baseline: {baseline['overall']})")
-                file_runs = []
+                file_runs = results.get(filename, [])
+                start_iteration = len(file_runs) + 1
                 
-                for iteration in range(1, 4):
+                for iteration in range(start_iteration, 4):
+                    if rate_limit_triggered:
+                        break
                     logger.info(f"[BENCHMARK] Running iteration {iteration}/3 for '{filename}'...")
                     
                     with open(filename, "rb") as f:
@@ -191,30 +211,38 @@ async def run_benchmark():
                         text_result = await evaluate_gra_lr_text(
                             annotated_transcript, questions_metadata_str, gemini_key
                         )
+                        comment = text_result.get("overallComment", "")
+                        is_rate_limit = "429" in comment or "ResourceExhausted" in comment or "quota" in comment.lower() or (
+                            text_result.get("grammarScore") == 0 and text_result.get("lexicalScore") == 0
+                        )
+                        if is_rate_limit:
+                            logger.warning(f"\n[RATE LIMIT DETECTED] Gemini rate limit/failure detected in text evaluation result: {comment}")
+                            logger.warning("Breaking loops early to calculate error metrics using completed runs.\n")
+                            rate_limit_triggered = True
+                            break
                     except Exception as gemini_err:
                         err_msg = str(gemini_err)
                         is_rate_limit = "429" in err_msg or "ResourceExhausted" in err_msg or "quota" in err_msg.lower()
                         if is_rate_limit:
-                            logger.error(f"\n[CRITICAL RATE LIMIT] Gemini rate limit hit during text evaluation: {err_msg}")
-                            logger.error("Exiting benchmark immediately as requested.\n")
-                            if server_process:
-                                server_process.terminate()
-                                server_process.wait()
-                            sys.exit(1)
+                            logger.warning(f"\n[RATE LIMIT DETECTED] Gemini rate limit hit during text evaluation: {err_msg}")
+                            logger.warning("Breaking loops early to calculate error metrics using completed runs.\n")
+                            rate_limit_triggered = True
+                            break
                         else:
                             logger.error(f"[BENCHMARK] Gemini evaluation failed: {gemini_err}")
                             continue
 
-                    # 3. Call local acoustic speaking-analyze endpoint
+                    # 3. Call the provider-backed speaking endpoint with raw audio.
                     data = {
                         "session_id": f"benchmark-{filename}-{iteration}-{int(time.time())}",
-                        "whisper_response_json": json.dumps(stt_json),
-                        "grammar_score": int(text_result.get("grammarScore", 5)),
-                        "lexical_score": int(text_result.get("lexicalScore", 5))
+                        "questions_metadata": "",
                     }
+                    files = {"file": (filename, contents, "audio/mpeg")}
 
                     try:
-                        response = await client.post("/api/v1/ai/speaking-analyze", data=data)
+                        response = await client.post(
+                            "/api/v1/ai/speaking-analyze", data=data, files=files
+                        )
                         end_time = time.time()
                         latency = end_time - start_time
                         
@@ -246,6 +274,15 @@ async def run_benchmark():
                             "overall": overall,
                             "latency": latency
                         })
+                        results[filename] = file_runs
+                        
+                        # Save checkpoint
+                        try:
+                            with open(checkpoint_path, "w", encoding="utf-8") as checkpoint_file:
+                                json.dump(results, checkpoint_file, indent=4)
+                        except Exception as e:
+                            logger.warning(f"[BENCHMARK] Could not save checkpoint: {e}")
+
                         logger.info(
                             f"[BENCHMARK] Iteration {iteration} completed in {latency:.2f}s. "
                             f"Scores (Integers): PR={pr}, FC={fc}, LR={lr}, GRA={gra} -> Holistic: {overall}"
@@ -258,11 +295,20 @@ async def run_benchmark():
                     logger.info("[BENCHMARK] Rate Limit Protection: Sleeping 15s before next iteration...")
                     await asyncio.sleep(15.0)
                 
-                if len(file_runs) == 3:
+                if len(file_runs) >= 1:
                     results[filename] = file_runs
                 else:
                     logger.warning(f"[BENCHMARK] Incomplete run matrix for '{filename}' ({len(file_runs)}/3). Skipping statistics.")
                     
+        # Remove checkpoint on clean completion of all iterations
+        if not rate_limit_triggered and len(results) == len(BASELINES) and all(len(runs) >= 3 for runs in results.values()):
+            if os.path.exists(checkpoint_path):
+                try:
+                    os.remove(checkpoint_path)
+                    logger.info("[BENCHMARK] Checkpoint cleared after full successful completion.")
+                except Exception as e:
+                    logger.warning(f"[BENCHMARK] Could not remove checkpoint: {e}")
+
         if not results:
             logger.error("[BENCHMARK] No successful benchmark iterations recorded. Exiting...")
             return
@@ -279,7 +325,7 @@ async def run_benchmark():
         total_delta = 0.0
         successful_files = len(results)
         for filename, runs in results.items():
-            mean_overall = sum(r["overall"] for r in runs) / 3.0
+            mean_overall = sum(r["overall"] for r in runs) / len(runs)
             total_delta += abs(mean_overall - BASELINES[filename]["overall"])
         mae = total_delta / successful_files
         meets_target = "YES" if mae <= 0.5 else "NO"
@@ -297,15 +343,19 @@ async def run_benchmark():
         
         for filename, runs in results.items():
             overall_scores = [r["overall"] for r in runs]
-            mean_overall = sum(overall_scores) / 3.0
+            mean_overall = sum(overall_scores) / len(runs)
             baseline_overall = BASELINES[filename]["overall"]
             delta = mean_overall - baseline_overall
-            spread = max(overall_scores) - min(overall_scores)
-            avg_lat = sum(r["latency"] for r in runs) / 3.0
+            spread = max(overall_scores) - min(overall_scores) if len(overall_scores) > 1 else 0.0
+            avg_lat = sum(r["latency"] for r in runs) / len(runs)
+            
+            it1 = overall_scores[0] if len(overall_scores) > 0 else "N/A"
+            it2 = overall_scores[1] if len(overall_scores) > 1 else "N/A"
+            it3 = overall_scores[2] if len(overall_scores) > 2 else "N/A"
             
             sign = "+" if delta >= 0 else ""
             report.append(
-                f"| `{filename}` | {overall_scores[0]} | {overall_scores[1]} | {overall_scores[2]} | "
+                f"| `{filename}` | {it1} | {it2} | {it3} | "
                 f"{mean_overall:.2f} | {baseline_overall:.1f} | {sign}{delta:.2f} | {spread:.1f} | {avg_lat:.2f}s |"
             )
         report.append("")
@@ -319,11 +369,16 @@ async def run_benchmark():
             report.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
             for crit in ["pr", "fc", "lr", "gra"]:
                 scores = [r[crit] for r in runs]
-                mean_crit = sum(scores) / 3.0
+                mean_crit = sum(scores) / len(runs)
                 base_crit = BASELINES[filename][crit]
-                crit_spread = max(scores) - min(scores)
+                crit_spread = max(scores) - min(scores) if len(scores) > 1 else 0.0
+                
+                it1 = int(scores[0]) if len(scores) > 0 else "N/A"
+                it2 = int(scores[1]) if len(scores) > 1 else "N/A"
+                it3 = int(scores[2]) if len(scores) > 2 else "N/A"
+                
                 report.append(
-                    f"| {crit.upper()} | {int(scores[0])} | {int(scores[1])} | {int(scores[2])} | "
+                    f"| {crit.upper()} | {it1} | {it2} | {it3} | "
                     f"{mean_crit:.2f} | {base_crit:.1f} | {crit_spread:.1f} |"
                 )
             report.append("")

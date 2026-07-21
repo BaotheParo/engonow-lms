@@ -12,12 +12,11 @@ Run: uvicorn mock_ai_services:app --host 0.0.0.0 --port 8001 --reload
 import os
 import re
 from dotenv import load_dotenv
-load_dotenv()
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import random
 import uvicorn
 import asyncio
@@ -33,13 +32,37 @@ from acoustic_engine import (
     score_acoustic,
 )
 
+# Provider Architecture Imports
+from providers.factory import get_speaking_provider
+from providers.base import UnifiedSpeakingResult, EvaluationStatus
+
+load_dotenv()  # Ensures .env is loaded even when running via uvicorn directly
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("engonow.mock")
 
+# Provider Singleton
+# Instantiated once at application startup. All requests share this instance.
+# To switch providers: change SPEAKING_AI_PROVIDER in .env and restart uvicorn.
+_SPEAKING_PROVIDER = get_speaking_provider()
+_AZURE_FALLBACK_STATE = {
+    "active": False,
+    "last_failure": "",
+}
+
+logger.info(
+    "[APP STARTUP] Active speaking evaluation provider: %s",
+    _SPEAKING_PROVIDER.provider_name,
+)
+
 app = FastAPI(
     title="ENGONOW External AI Services",
-    description="Azure Pronunciation Assessment (Groq Whisper + Gemini) + OpenCV OMR microservices.",
+    description=(
+        "ENGONOW IELTS Speaking Evaluation Pipeline with Pluggable Provider Architecture. "
+        "Toggle SPEAKING_AI_PROVIDER in .env between GROQ_LOCAL (free) and AZURE (paid) "
+        "without any code changes. Both providers return the identical JSON schema."
+    ),
     version="2.0.0",
 )
 
@@ -687,88 +710,209 @@ async def process_speaking_evaluation_task(
 
 @app.post(
     "/api/v1/ai/speaking-analyze",
-    summary="Hybrid Speaking Analyzer  Acoustic Engine (FC + PR) + LLM (GRA + LR)",
+    summary="IELTS Speaking Evaluation - Pluggable Provider",
     description=(
-        "Accepts a Whisper verbose_json response payload and scores Fluency (FC) "
-        "and Pronunciation (PR) deterministically via the ENGONOW Acoustic Engine. "
-        "GRA and LR scores are passed in from the separate LLM evaluation track. "
-        "Returns a unified score payload for the Java Spring Boot grading layer."
+        f"Routes to the active provider ({_SPEAKING_PROVIDER.provider_name}). "
+        "Toggle SPEAKING_AI_PROVIDER in .env and restart to switch providers. "
+        "Both providers return the identical UnifiedSpeakingResult JSON schema."
     ),
 )
 async def speaking_analyze(
-    session_id:            str = Form(..., description="Unique speaking session identifier"),
-    whisper_response_json: str = Form(..., description="Full Groq Whisper verbose_json response as a JSON string"),
-    grammar_score:         int = Form(..., description="GRA score from LLM evaluation (integer 1-9)", ge=1, le=9),
-    lexical_score:         int = Form(..., description="LR score from LLM evaluation (integer 1-9)", ge=1, le=9),
+    session_id: str = Form(..., description="Unique speaking session identifier"),
+    audio_url: Optional[str] = Form(
+        None, description="URL of audio file (Cloudinary CDN or local path)"
+    ),
+    questions_metadata: str = Form(
+        "", description="Examiner questions as formatted string for Gemini context"
+    ),
+    file: Optional[UploadFile] = File(
+        None, description="Raw audio upload for local development and benchmarks"
+    ),
 ):
     """
-    Acoustic Engine integration endpoint.
+    Entry point for IELTS Speaking evaluation.
 
-    FC and PR are computed deterministically from Whisper metadata.
-    GRA and LR are accepted as already-computed LLM outputs (integer 1-9).
-    All four scores are assembled for the Java composite scoring layer.
+    Provider selection is controlled by SPEAKING_AI_PROVIDER in .env:
+      GROQ_LOCAL    Groq Whisper + Acoustic Engine + Gemini  (Free)
+      AZURE         Azure Speech SDK + Pronunciation API + Gemini  (Paid)
+
+    Providers catch pipeline errors and represent them as PARTIAL or FAILED in
+    the common result schema, so those outcomes are returned with HTTP 200.
     """
-    import json as _json
+    gemini_api_key = os.getenv("GEMINI_API_KEY", "")
 
-    logger.info(
-        "[ACOUSTIC ENGINE] Received speaking-analyze request. session_id='%s'", session_id
-    )
+    if not gemini_api_key:
+        logger.error("[SPEAKING ANALYZE] GEMINI_API_KEY is not set.")
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY environment variable is not configured.",
+        )
 
-    #  Parse Whisper response
-    try:
-        whisper_dict = _json.loads(whisper_response_json)
-    except _json.JSONDecodeError as e:
-        logger.error("[ACOUSTIC ENGINE] Failed to parse whisper_response_json: %s", str(e))
+    if not audio_url and file is None:
         raise HTTPException(
             status_code=422,
-            detail=f"whisper_response_json is not valid JSON: {str(e)}"
+            detail="Provide either audio_url or a multipart audio file.",
         )
 
-    #  Run Acoustic Engine
-    try:
-        acoustic: AcousticScore = score_acoustic(whisper_dict)
-    except ValueError as e:
-        logger.warning(
-            "[ACOUSTIC ENGINE] Acoustic engine ValueError for session_id='%s': %s  returning default scores",
-            session_id, str(e)
-        )
-        # Default to Band 3 on engine failure (safe fallback  not zero)
-        acoustic = None
-
-    if acoustic is not None:
-        fc_score = acoustic.fc_score
-        pr_score = acoustic.pr_score
-        diagnostics = acoustic.diagnostics
-        warnings = acoustic.warnings
-    else:
-        fc_score = 3
-        pr_score = 3
-        diagnostics = {}
-        warnings = ["ACOUSTIC_ENGINE_FAILED: defaulted to Band 3 for FC and PR"]
-
-    #  Validate all four scores are strict integers 1-9
-    for name, val in [("fc_score", fc_score), ("pr_score", pr_score),
-                      ("grammar_score", grammar_score), ("lexical_score", lexical_score)]:
-        if not isinstance(val, int) or not (1 <= val <= 9):
-            logger.error("[ACOUSTIC ENGINE] Invalid score %s=%r for session_id='%s'", name, val, session_id)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Score validation failed: {name}={val} is not an integer in [1,9]"
-            )
+    audio_bytes = await file.read() if file is not None else None
+    audio_filename = file.filename or "audio.mp3" if file is not None else "audio.mp3"
+    if file is not None and not audio_bytes:
+        raise HTTPException(status_code=422, detail="Uploaded audio file is empty.")
 
     logger.info(
-        "[ACOUSTIC ENGINE] session_id='%s' | FC=%d PR=%d GRA=%d LR=%d",
-        session_id, fc_score, pr_score, grammar_score, lexical_score,
+        "[SPEAKING ANALYZE] session_id='%s' provider='%s' audio_url='%.80s...'",
+        session_id,
+        _SPEAKING_PROVIDER.provider_name,
+        audio_url or f"<uploaded:{audio_filename}>",
     )
 
+    # Check if fallback is active
+    use_fallback = (
+        _SPEAKING_PROVIDER.provider_name == "AZURE"
+        and _AZURE_FALLBACK_STATE["active"]
+    )
+
+    if use_fallback:
+        logger.warning(
+            "[SPEAKING ANALYZE] Active provider is AZURE, but fallback state is active due to a previous failure. "
+            "Routing request directly to GROQ_LOCAL."
+        )
+        from providers.groq_local_provider import GroqLocalProvider
+        active_provider = GroqLocalProvider(config=_SPEAKING_PROVIDER._config)
+    else:
+        active_provider = _SPEAKING_PROVIDER
+
+    result: UnifiedSpeakingResult = await active_provider.evaluate(
+        session_id=session_id,
+        audio_url=audio_url,
+        gemini_api_key=gemini_api_key,
+        questions_metadata=questions_metadata,
+        audio_bytes=audio_bytes,
+        audio_filename=audio_filename,
+    )
+
+    if use_fallback:
+        result.provider_used = "GROQ_LOCAL (FALLBACK)"
+        result.provider_metadata.setdefault("warnings", []).insert(
+            0, f"AZURE_LIVE_FAILED: Fallback active. Request automatically routed to GROQ_LOCAL. Last failure: {_AZURE_FALLBACK_STATE['last_failure']}"
+        )
+        result.provider_metadata["fallback_from"] = "AZURE"
+
+    azure_warnings = result.provider_metadata.get("warnings", [])
+    azure_failed = (
+        _SPEAKING_PROVIDER.provider_name == "AZURE"
+        and not use_fallback
+        and any(str(item).startswith("AZURE_PR_FC_FAILED:") for item in azure_warnings)
+    )
+    if azure_failed:
+        azure_failure_metadata = result.provider_metadata
+        azure_failure_message = next(
+            str(item)
+            for item in azure_warnings
+            if str(item).startswith("AZURE_PR_FC_FAILED:")
+        )
+        _AZURE_FALLBACK_STATE["active"] = True
+        _AZURE_FALLBACK_STATE["last_failure"] = azure_failure_message
+        logger.error(
+            "[SPEAKING ANALYZE] Live Azure assessment failed for session='%s'; "
+            "activating GROQ_LOCAL fallback.",
+            session_id,
+        )
+        from providers.groq_local_provider import GroqLocalProvider
+
+        fallback_provider = GroqLocalProvider(config=_SPEAKING_PROVIDER._config)
+        result = await fallback_provider.evaluate(
+            session_id=session_id,
+            audio_url=audio_url,
+            gemini_api_key=gemini_api_key,
+            questions_metadata=questions_metadata,
+            audio_bytes=audio_bytes,
+            audio_filename=audio_filename,
+        )
+        result.provider_used = "GROQ_LOCAL (FALLBACK)"
+        result.provider_metadata.setdefault("warnings", []).insert(
+            0, "AZURE_LIVE_FAILED: Request automatically rerouted to GROQ_LOCAL."
+        )
+        result.provider_metadata["fallback_from"] = "AZURE"
+        result.provider_metadata["azure_failure"] = azure_failure_metadata
+
+    if result.status == EvaluationStatus.FAILED:
+        logger.error(
+            "[SPEAKING ANALYZE] Pipeline FAILED for session='%s'. Metadata: %s",
+            session_id,
+            result.provider_metadata,
+        )
+    elif result.status == EvaluationStatus.PARTIAL:
+        logger.warning(
+            "[SPEAKING ANALYZE] Pipeline PARTIAL for session='%s'. Warnings: %s",
+            session_id,
+            result.provider_metadata.get("warnings", []),
+        )
+    else:
+        logger.info(
+            "[SPEAKING ANALYZE] SUCCESS session='%s' PR=%d FC=%d GRA=%d LR=%d "
+            "coverage=%.2f time=%.0fms",
+            session_id,
+            result.pronunciation_score,
+            result.fluency_score,
+            result.grammar_score,
+            result.lexical_score,
+            result.genuine_word_coverage,
+            result.processing_time_ms,
+        )
+
+    return result.to_dict()
+
+
+@app.get(
+    "/api/v1/provider/status",
+    summary="Active Provider Status",
+    description="Returns configuration and health status of the active speaking evaluation provider.",
+)
+async def provider_status():
+    """Return active speaking-provider configuration and readiness."""
+    config_summary = {
+        "active_provider": _SPEAKING_PROVIDER.provider_name,
+        "gemini_configured": bool(os.getenv("GEMINI_API_KEY", "")),
+        "groq_configured": (
+            bool(os.getenv("GROQ_API_KEY", ""))
+            if _SPEAKING_PROVIDER.provider_name == "GROQ_LOCAL"
+            else "N/A"
+        ),
+        "azure_key_set": (
+            os.getenv("AZURE_SPEECH_KEY", "NOT_CONFIGURED") != "NOT_CONFIGURED"
+            if _SPEAKING_PROVIDER.provider_name == "AZURE"
+            else "N/A"
+        ),
+        "word_confidence_threshold": float(
+            os.getenv("WORD_CONFIDENCE_THRESHOLD", "0.70")
+        ),
+        "acoustic_diagnostics": os.getenv("ENABLE_ACOUSTIC_DIAGNOSTICS", "true"),
+    }
+
+    provider_healthy = True
+    health_message = "Provider operational."
+
+    if _SPEAKING_PROVIDER.provider_name == "AZURE":
+        from providers.azure_provider import AzureProvider
+
+        if isinstance(_SPEAKING_PROVIDER, AzureProvider) and _SPEAKING_PROVIDER._is_mock:
+            provider_healthy = False
+            health_message = (
+                "AZURE provider is in MOCK MODE. "
+                "Set AZURE_SPEECH_KEY in .env to activate live evaluation."
+            )
+        elif _AZURE_FALLBACK_STATE["active"]:
+            provider_healthy = False
+            health_message = (
+                "Azure live evaluation failed and GROQ_LOCAL fallback is active. "
+                f"Last failure: {_AZURE_FALLBACK_STATE['last_failure']}"
+            )
+
     return {
-        "session_id":          session_id,
-        "pronunciation_score": pr_score,
-        "fluency_score":       fc_score,
-        "grammar_score":       grammar_score,
-        "lexical_score":       lexical_score,
-        "diagnostics":         diagnostics,
-        "warnings":            warnings,
+        "status": "UP" if provider_healthy else "DEGRADED",
+        "health_message": health_message,
+        "configuration": config_summary,
     }
 
 
