@@ -1,17 +1,31 @@
 package com.engonow.lms.service.impl;
 
 import com.engonow.lms.dto.OmrAnswer;
+import com.engonow.lms.dto.SpeakingEvaluationEventPayload;
+import com.engonow.lms.dto.SpeakingSubmissionRequestDTO;
+import com.engonow.lms.dto.SpeakingSubmissionResponseDTO;
 import com.engonow.lms.dto.SubmissionResponseDTO;
 import com.engonow.lms.entity.AnswerKey;
 import com.engonow.lms.entity.Exam;
+import com.engonow.lms.entity.MockTestBooking;
+import com.engonow.lms.entity.OutboxEvent;
+import com.engonow.lms.entity.SpeakingSessionResult;
 import com.engonow.lms.entity.SubmissionDetail;
 import com.engonow.lms.entity.TestSubmission;
 import com.engonow.lms.entity.User;
+import com.engonow.lms.enums.OutboxStatus;
+import com.engonow.lms.enums.SpeakingEvaluationStatus;
+import com.engonow.lms.exception.DuplicateWebhookException;
 import com.engonow.lms.mapper.SubmissionMapper;
 import com.engonow.lms.repository.ExamRepository;
+import com.engonow.lms.repository.MockTestBookingRepository;
+import com.engonow.lms.repository.OutboxEventRepository;
+import com.engonow.lms.repository.SpeakingSessionResultRepository;
 import com.engonow.lms.repository.TestSubmissionRepository;
 import com.engonow.lms.repository.UserRepository;
 import com.engonow.lms.service.SubmissionService;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.ByteArrayResource;
@@ -26,6 +40,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +56,10 @@ public class SubmissionServiceImpl implements SubmissionService {
     private final WebClient aiWebClient;
     private final SubmissionMapper submissionMapper;
     private final CloudinaryStorageMock cloudinaryStorageMock;
+    private final MockTestBookingRepository mockTestBookingRepository;
+    private final SpeakingSessionResultRepository speakingSessionResultRepository;
+    private final OutboxEventRepository outboxEventRepository;
+    private final ObjectMapper objectMapper;
 
     public SubmissionServiceImpl(
             ExamRepository examRepository,
@@ -48,13 +67,21 @@ public class SubmissionServiceImpl implements SubmissionService {
             UserRepository userRepository,
             @Qualifier("aiWebClient") WebClient aiWebClient,
             SubmissionMapper submissionMapper,
-            CloudinaryStorageMock cloudinaryStorageMock) {
+            CloudinaryStorageMock cloudinaryStorageMock,
+            MockTestBookingRepository mockTestBookingRepository,
+            SpeakingSessionResultRepository speakingSessionResultRepository,
+            OutboxEventRepository outboxEventRepository,
+            ObjectMapper objectMapper) {
         this.examRepository = examRepository;
         this.testSubmissionRepository = testSubmissionRepository;
         this.userRepository = userRepository;
         this.aiWebClient = aiWebClient;
         this.submissionMapper = submissionMapper;
         this.cloudinaryStorageMock = cloudinaryStorageMock;
+        this.mockTestBookingRepository = mockTestBookingRepository;
+        this.speakingSessionResultRepository = speakingSessionResultRepository;
+        this.outboxEventRepository = outboxEventRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -155,5 +182,69 @@ public class SubmissionServiceImpl implements SubmissionService {
         TestSubmission savedSubmission = testSubmissionRepository.save(submission);
 
         return submissionMapper.toResponseDto(savedSubmission);
+    }
+
+    @Override
+    @Transactional
+    public SpeakingSubmissionResponseDTO submitSpeakingEvaluation(
+            SpeakingSubmissionRequestDTO request) {
+        Long bookingId = parseBookingId(request.sessionId());
+
+        MockTestBooking booking = mockTestBookingRepository.findById(bookingId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "MockTestBooking not found for session ID: " + request.sessionId()));
+
+        if (speakingSessionResultRepository.findBySessionId(request.sessionId()).isPresent()) {
+            throw new DuplicateWebhookException(
+                    "Speaking session " + request.sessionId() + " has already been submitted.");
+        }
+
+        Instant requestedAt = Instant.now();
+        SpeakingEvaluationEventPayload eventPayload =
+                new SpeakingEvaluationEventPayload(
+                        request.sessionId(),
+                        request.questionsMetadata(),
+                        request.audioUrl(),
+                        requestedAt);
+
+        String serializedPayload;
+        try {
+            serializedPayload = objectMapper.writeValueAsString(eventPayload);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(
+                    "Failed to serialize speaking evaluation event payload", e);
+        }
+
+        SpeakingSessionResult pendingResult = SpeakingSessionResult.builder()
+                .booking(booking)
+                .sessionId(request.sessionId())
+                .evaluationStatus(SpeakingEvaluationStatus.PENDING)
+                .isComplete(false)
+                .build();
+        speakingSessionResultRepository.save(pendingResult);
+
+        OutboxEvent outboxEvent = OutboxEvent.builder()
+                .aggregateType("SPEAKING_SESSION")
+                .aggregateId(request.sessionId())
+                .eventType("SPEAKING_EVALUATION_REQUESTED")
+                .payload(serializedPayload)
+                .status(OutboxStatus.PENDING)
+                .retryCount(0)
+                .build();
+        outboxEventRepository.save(outboxEvent);
+
+        return new SpeakingSubmissionResponseDTO(
+                request.sessionId(),
+                SpeakingEvaluationStatus.PENDING,
+                "Speaking evaluation accepted for asynchronous processing");
+    }
+
+    private Long parseBookingId(String sessionId) {
+        try {
+            return Long.parseLong(sessionId);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    "Session ID must be a valid numeric booking ID: " + sessionId, e);
+        }
     }
 }

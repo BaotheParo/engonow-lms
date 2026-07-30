@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 
+from acoustic_engine import is_nonlexical_filler, score_acoustic
 from providers.base import (
     AbstractSpeakingProvider,
     EvaluationStatus,
@@ -85,8 +86,6 @@ class GroqLocalProvider(AbstractSpeakingProvider):
         acoustic_metadata = {}
         acoustic_failed = False
         try:
-            from acoustic_engine import score_acoustic
-
             acoustic_result = score_acoustic(whisper_response)
             pr_score = acoustic_result.pr_score
             fc_score = acoustic_result.fc_score
@@ -227,7 +226,7 @@ class GroqLocalProvider(AbstractSpeakingProvider):
     def _build_annotated_transcript(
         self, whisper_response: dict
     ) -> Tuple[str, float]:
-        """Annotate pauses/low confidence and calculate genuine word coverage."""
+        """Annotate pauses, fillers, and low confidence; calculate genuine coverage."""
         words = whisper_response.get("words", [])
         if not isinstance(words, list) or not words:
             return "", 0.0
@@ -251,7 +250,9 @@ class GroqLocalProvider(AbstractSpeakingProvider):
                 if gap >= pause_min:
                     tokens.append(f"[PAUSE: {gap:.1f}s]")
 
-            if probability < threshold:
+            if is_nonlexical_filler(word):
+                tokens.append(f"[FILLER: {word}]")
+            elif probability < threshold:
                 tokens.append(f"{word}[LOW_CONFIDENCE]")
             else:
                 tokens.append(word)

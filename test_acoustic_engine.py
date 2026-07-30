@@ -79,15 +79,49 @@ class ProbabilityFallbackTests(unittest.TestCase):
         self.assertAlmostEqual(features.logprob_std, statistics.stdev(genuine_logprobs))
         self.assertAlmostEqual(features.p5_cal_logprob, min(genuine_logprobs))
 
-    def test_insufficient_genuine_data_is_low_reliability(self):
+    def test_insufficient_genuine_data_uses_segment_fallback(self):
         result = score_acoustic(response([0.9] * 4 + [0.0] * 6))
-        self.assertEqual(result.pr_score, 1)
+        self.assertEqual(result.pr_score, 7)
+        self.assertEqual(result.pr_raw, -0.25)
+        self.assertFalse(result.pronunciation.calibration_reliable)
         self.assertTrue(
             any(
                 warning.startswith("INSUFFICIENT_GENUINE_PR_DATA:")
                 for warning in result.warnings
             )
         )
+
+    def test_segment_fallback_band_thresholds(self):
+        cases = [
+            (-0.17, 8),
+            (-0.18, 7),
+            (-0.27, 7),
+            (-0.28, 6),
+            (-0.37, 6),
+            (-0.38, 5),
+            (-0.49, 5),
+            (-0.50, 4),
+            (-0.64, 4),
+            (-0.65, 3),
+        ]
+        for avg_logprob, expected_band in cases:
+            with self.subTest(avg_logprob=avg_logprob):
+                raw_response = response([0.0] * 5)
+                raw_response["segments"][0]["avg_logprob"] = avg_logprob
+                features = compute_pronunciation_features(
+                    parse_whisper_output(raw_response)
+                )
+                self.assertEqual(features.pr_band, expected_band)
+                self.assertEqual(features.mean_cal_logprob, avg_logprob)
+                self.assertEqual(features.pr_raw, avg_logprob)
+
+    def test_segment_fallback_defaults_to_minus_point_five(self):
+        raw_response = response([0.0] * 5)
+        raw_response["segments"] = []
+        features = compute_pronunciation_features(parse_whisper_output(raw_response))
+        self.assertEqual(features.pr_band, 4)
+        self.assertEqual(features.mean_cal_logprob, -0.5)
+        self.assertEqual(features.pr_raw, -0.5)
 
 
 class NormalizationTests(unittest.TestCase):

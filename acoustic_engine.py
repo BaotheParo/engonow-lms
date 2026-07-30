@@ -605,11 +605,31 @@ def compute_pronunciation_features(parsed: ParsedWhisperOutput) -> Pronunciation
     genuine_coverage = genuine_count / parsed.total_words if parsed.total_words else 0.0
 
     if parsed.total_words < 5 or genuine_count < 5:
+        avg_logprobs = [
+            segment.avg_logprob
+            for segment in parsed.segments
+            if segment.avg_logprob is not None
+        ]
+        global_avg = statistics.mean(avg_logprobs) if avg_logprobs else -0.5
+
+        if global_avg > -0.18:
+            pr_band = 8
+        elif global_avg > -0.28:
+            pr_band = 7
+        elif global_avg > -0.38:
+            pr_band = 6
+        elif global_avg > -0.50:
+            pr_band = 5
+        elif global_avg > -0.65:
+            pr_band = 4
+        else:
+            pr_band = 3
+
         return PronunciationFeatures(
             fw_baseline_logprob=0.0,
             calibration_shift=0.0,
             fw_sample_count=0,
-            mean_cal_logprob=0.0,
+            mean_cal_logprob=global_avg,
             p5_cal_logprob=0.0,
             logprob_std=0.0,
             content_mean_cal_logprob=0.0,
@@ -620,8 +640,8 @@ def compute_pronunciation_features(parsed: ParsedWhisperOutput) -> Pronunciation
             s_severe=0.0,
             s_consistency=0.0,
             s_tail=0.0,
-            pr_raw=0.0,
-            pr_band=1,
+            pr_raw=global_avg,
+            pr_band=pr_band,
             calibration_reliable=False,
             genuine_confidence_word_count=genuine_count,
             genuine_confidence_coverage=genuine_coverage,

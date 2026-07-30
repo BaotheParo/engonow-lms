@@ -37,8 +37,14 @@ public class WebhookServiceImpl implements WebhookService {
     @Override
     @Transactional
     public void handleAiSpeakingCallback(SpeakingWebhookPayload payload) {
-        // Idempotency protection
-        if (speakingSessionResultRepository.findBySessionId(payload.sessionId()).isPresent()) {
+        SpeakingSessionResult existingResult = speakingSessionResultRepository
+                .findBySessionId(payload.sessionId())
+                .orElse(null);
+
+        // A PENDING row is the submission created with its outbox event. Any
+        // terminal row means this callback has already been applied.
+        if (existingResult != null
+                && existingResult.getEvaluationStatus() != SpeakingEvaluationStatus.PENDING) {
             throw new DuplicateWebhookException("Speaking session result with sessionId " + payload.sessionId() + " already exists.");
         }
 
@@ -53,8 +59,13 @@ public class WebhookServiceImpl implements WebhookService {
         MockTestBooking booking = mockTestBookingRepository.findById(bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("MockTestBooking not found for ID: " + bookingId));
 
-        // Use SpeakingMapper to populate entity fields from payload (e.g. feedbackText)
-        SpeakingSessionResult result = speakingMapper.toEntity(payload);
+        // Complete the pending submission row when present. The fallback path
+        // preserves compatibility with callbacks created before the outbox flow.
+        SpeakingSessionResult result = existingResult != null
+                ? existingResult
+                : speakingMapper.toEntity(payload);
+        result.setSessionId(payload.sessionId());
+        result.setFeedbackText(payload.feedbackText());
         result.setEvaluationStatus(
                 payload.status() != null ? payload.status() : SpeakingEvaluationStatus.SUCCESS
         );

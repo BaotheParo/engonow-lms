@@ -2,6 +2,20 @@ spring:
   application:
     name: engonow-lms-backend
 
+  # Centralized distributed state (Lettuce connection pool)
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT:2000ms}
+      lettuce:
+        pool:
+          max-active: ${REDIS_POOL_MAX_ACTIVE:16}
+          max-idle: ${REDIS_POOL_MAX_IDLE:8}
+          min-idle: ${REDIS_POOL_MIN_IDLE:2}
+          max-wait: ${REDIS_POOL_MAX_WAIT:1000ms}
+
   # ─── DataSource (HikariCP) ────────────────────────────────────────────────
   datasource:
     url: >

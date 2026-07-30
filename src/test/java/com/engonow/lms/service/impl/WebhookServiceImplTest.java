@@ -27,6 +27,8 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -89,6 +91,38 @@ public class WebhookServiceImplTest {
                 resultEntity.getEvaluationStatus()
         );
         assertEquals(0, BigDecimal.valueOf(7).compareTo(resultEntity.getPronunciationScore()));
+    }
+
+    @Test
+    public void testPendingOutboxSubmissionIsCompletedByWebhook() {
+        String sessionId = "789";
+        SpeakingWebhookPayload payload = new SpeakingWebhookPayload(
+                sessionId,
+                BigDecimal.valueOf(7),
+                BigDecimal.valueOf(7),
+                BigDecimal.valueOf(7),
+                BigDecimal.valueOf(7),
+                EVIDENCES_WITH_MINIMUM_REQUIRED_COUNT,
+                Collections.emptyList(),
+                "Completed asynchronously"
+        );
+        MockTestBooking booking = new MockTestBooking();
+        booking.setId(789L);
+        SpeakingSessionResult pendingResult = new SpeakingSessionResult();
+        pendingResult.setSessionId(sessionId);
+        pendingResult.setEvaluationStatus(SpeakingEvaluationStatus.PENDING);
+
+        when(speakingSessionResultRepository.findBySessionId(sessionId))
+                .thenReturn(Optional.of(pendingResult));
+        when(mockTestBookingRepository.findById(789L)).thenReturn(Optional.of(booking));
+
+        webhookService.handleAiSpeakingCallback(payload);
+
+        assertEquals(SpeakingEvaluationStatus.SUCCESS,
+                pendingResult.getEvaluationStatus());
+        assertEquals("Completed asynchronously", pendingResult.getFeedbackText());
+        verify(speakingMapper, never()).toEntity(payload);
+        verify(speakingSessionResultRepository).save(pendingResult);
     }
 
     /**

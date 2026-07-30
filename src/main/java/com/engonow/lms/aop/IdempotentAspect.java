@@ -70,10 +70,21 @@ public class IdempotentAspect {
         boolean locked = idempotencyRepository.tryLock(finalKey, ttlMillis);
         if (!locked) {
             log.warn("Duplicate request detected for key: {} on method: {}", finalKey, method.getName());
-            throw new IdempotencyException("Request is already processing or completed.");
+            throw new IdempotencyException(
+                    "Request is already completed or currently processing.");
         }
 
-        // 6. Proceed to execute original method (Do NOT release lock in finally block as we want to hold it for TTL)
-        return joinPoint.proceed();
+        // 6. Execute the method and release the lock only when business processing fails
+        Object result;
+        try {
+            result = joinPoint.proceed();
+        } catch (Throwable throwable) {
+            idempotencyRepository.releaseLock(finalKey);
+            throw throwable;
+        }
+
+        // 7. Preserve the lock as COMPLETED for the remainder of its TTL
+        idempotencyRepository.completeLock(finalKey, ttlMillis);
+        return result;
     }
 }

@@ -7,6 +7,7 @@ import com.engonow.lms.entity.SpeakingSessionResult;
 import com.engonow.lms.repository.MockTestBookingRepository;
 import com.engonow.lms.repository.SpeakingSessionResultRepository;
 import com.engonow.lms.repository.IdempotencyRepository;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -50,15 +51,18 @@ public class WebhookCallbackControllerIT {
     @Autowired
     private IdempotencyRepository idempotencyRepository;
 
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+
     private String lastSessionId;
 
     @AfterEach
     public void cleanUp() {
         speakingSessionResultRepository.deleteAllInBatch();
-        if (lastSessionId != null) {
-            idempotencyRepository.releaseLock("webhook:speaking:" + lastSessionId);
-            lastSessionId = null;
+        if (stringRedisTemplate.getConnectionFactory() != null) {
+            stringRedisTemplate.getConnectionFactory().getConnection().serverCommands().flushDb();
         }
+        lastSessionId = null;
     }
 
     @Test
