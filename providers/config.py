@@ -42,6 +42,18 @@ class ProviderConfig:
     fallback_score_lr:  int
 
 
+@dataclass(frozen=True)
+class WorkerConfig:
+    """Immutable event-worker configuration snapshot."""
+
+    broker_type: str
+    speaking_requests_topic: str
+    speaking_results_topic: str
+    concurrency_limit: int
+    kafka_bootstrap_servers: str
+    kafka_consumer_group: str
+
+
 def load_provider_config() -> ProviderConfig:
     """
     Builds ProviderConfig from environment variables.
@@ -79,6 +91,43 @@ def load_provider_config() -> ProviderConfig:
     )
 
 
+def load_worker_config() -> WorkerConfig:
+    """Load and validate asynchronous worker settings."""
+    broker_type = os.getenv("BROKER_TYPE", "LOCAL").strip().upper()
+    if broker_type not in ("LOCAL", "KAFKA"):
+        raise ValueError(
+            f"Invalid BROKER_TYPE='{broker_type}'. "
+            "Accepted values: LOCAL | KAFKA."
+        )
+
+    requests_topic = os.getenv(
+        "SPEAKING_REQUESTS_TOPIC", "ielts-speaking-requests"
+    ).strip()
+    results_topic = os.getenv(
+        "SPEAKING_RESULTS_TOPIC", "ielts-speaking-results"
+    ).strip()
+    if not requests_topic or not results_topic:
+        raise ValueError("Speaking request and result topic names must not be empty.")
+
+    concurrency_limit = int(os.getenv("WORKER_CONCURRENCY_LIMIT", "5"))
+    if concurrency_limit < 1:
+        raise ValueError("WORKER_CONCURRENCY_LIMIT must be at least 1.")
+
+    return WorkerConfig(
+        broker_type=broker_type,
+        speaking_requests_topic=requests_topic,
+        speaking_results_topic=results_topic,
+        concurrency_limit=concurrency_limit,
+        kafka_bootstrap_servers=os.getenv(
+            "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
+        ).strip(),
+        kafka_consumer_group=os.getenv(
+            "KAFKA_CONSUMER_GROUP", "engonow-speaking-ai-workers"
+        ).strip(),
+    )
+
+
 #  Module-level singleton 
 # Loaded once at import time. All providers share this instance.
 CONFIG: ProviderConfig = load_provider_config()
+WORKER_CONFIG: WorkerConfig = load_worker_config()

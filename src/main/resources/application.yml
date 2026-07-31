@@ -2,6 +2,10 @@ spring:
   application:
     name: engonow-lms-backend
 
+  kafka:
+    listener:
+      ack-mode: manual_immediate
+
   # Centralized distributed state (Lettuce connection pool)
   data:
     redis:
@@ -84,6 +88,16 @@ app:
     api-key: ${CLOUDINARY_API_KEY:fake-api-key-dev}
     api-secret: ${CLOUDINARY_API_SECRET:fake-api-secret-dev}
     upload-folder: omr-scans
+
+engonow:
+  broker:
+    type: ${ENGONOW_BROKER_TYPE:LOCAL}
+    kafka:
+      topic: ${ENGONOW_KAFKA_TOPIC:ielts-speaking-requests}
+    topics:
+      speaking-results: ${ENGONOW_KAFKA_RESULTS_TOPIC:ielts-speaking-results}
+  outbox:
+    relay-delay-ms: ${ENGONOW_OUTBOX_RELAY_DELAY_MS:500}
 
 # ─── Springdoc / Swagger UI ──────────────────────────────────────────────────
 springdoc:
