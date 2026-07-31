@@ -23,7 +23,13 @@ GENUINE_WORD_COVERAGE = Histogram(
     buckets=(0.1, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
 )
 
+DRIFT_ALERTS_TOTAL = Counter(
+    "engonow_speaking_drift_alerts_total",
+    "Total number of statistical drift alerts triggered",
+)
+
 __all__ = [
+    "DRIFT_ALERTS_TOTAL",
     "EVALUATION_LATENCY_SECONDS",
     "EVALUATION_REQUESTS_TOTAL",
     "GENUINE_WORD_COVERAGE",

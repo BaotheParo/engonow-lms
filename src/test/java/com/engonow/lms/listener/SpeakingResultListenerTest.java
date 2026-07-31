@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.engonow.lms.dto.SpeakingWebhookPayload;
 import com.engonow.lms.enums.SpeakingEvaluationStatus;
+import com.engonow.lms.metrics.TelemetryManager;
 import com.engonow.lms.repository.IdempotencyRepository;
 import com.engonow.lms.service.WebhookService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,6 +32,9 @@ class SpeakingResultListenerTest {
     @Mock
     private IdempotencyRepository idempotencyRepository;
 
+    @Mock
+    private TelemetryManager telemetryManager;
+
     private SpeakingResultListener listener;
 
     @BeforeEach
@@ -38,7 +42,8 @@ class SpeakingResultListenerTest {
         listener = new SpeakingResultListener(
                 new ObjectMapper(),
                 webhookService,
-                idempotencyRepository);
+                idempotencyRepository,
+                telemetryManager);
     }
 
     @Test
@@ -56,6 +61,7 @@ class SpeakingResultListenerTest {
         verify(idempotencyRepository).completeLock(
                 IDEMPOTENCY_KEY,
                 IDEMPOTENCY_TTL_MILLIS);
+        verify(telemetryManager).incrementProcessedResults("SUCCESS");
 
         SpeakingWebhookPayload payload = payloadCaptor.getValue();
         assertThat(payload.sessionId()).isEqualTo(SESSION_ID);
@@ -121,6 +127,7 @@ class SpeakingResultListenerTest {
                 IDEMPOTENCY_TTL_MILLIS);
         assertThat(payloadCaptor.getValue().status())
                 .isEqualTo(SpeakingEvaluationStatus.SYSTEM_ERROR);
+        verify(telemetryManager).incrementProcessedResults("SYSTEM_ERROR");
     }
 
     private String successPayload() {

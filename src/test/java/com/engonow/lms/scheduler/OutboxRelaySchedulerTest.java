@@ -2,6 +2,7 @@ package com.engonow.lms.scheduler;
 
 import com.engonow.lms.entity.OutboxEvent;
 import com.engonow.lms.enums.OutboxStatus;
+import com.engonow.lms.metrics.TelemetryManager;
 import com.engonow.lms.publisher.MessagePublisher;
 import com.engonow.lms.repository.OutboxEventRepository;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,9 @@ class OutboxRelaySchedulerTest {
     @Mock
     private MessagePublisher messagePublisher;
 
+    @Mock
+    private TelemetryManager telemetryManager;
+
     @Test
     void publishesPendingEventExactlyOnceAndMarksItSent() {
         OutboxEvent event = pendingEvent(1L, 0);
@@ -36,7 +40,10 @@ class OutboxRelaySchedulerTest {
                 OutboxStatus.PENDING))
                 .thenReturn(List.of(event));
         OutboxRelayScheduler scheduler =
-                new OutboxRelayScheduler(outboxEventRepository, messagePublisher);
+                new OutboxRelayScheduler(
+                        outboxEventRepository,
+                        messagePublisher,
+                        telemetryManager);
 
         scheduler.processPendingOutboxEvents();
 
@@ -57,7 +64,10 @@ class OutboxRelaySchedulerTest {
                 .when(messagePublisher)
                 .publish(event);
         OutboxRelayScheduler scheduler =
-                new OutboxRelayScheduler(outboxEventRepository, messagePublisher);
+                new OutboxRelayScheduler(
+                        outboxEventRepository,
+                        messagePublisher,
+                        telemetryManager);
 
         scheduler.processPendingOutboxEvents();
 
@@ -66,6 +76,7 @@ class OutboxRelaySchedulerTest {
         assertEquals(3, event.getRetryCount());
         assertEquals(OutboxStatus.FAILED, event.getStatus());
         assertEquals("Kafka unavailable", event.getErrorMessage());
+        verify(telemetryManager).incrementOutboxRelayErrors();
     }
 
     @Test
@@ -78,13 +89,17 @@ class OutboxRelaySchedulerTest {
                 .when(messagePublisher)
                 .publish(event);
         OutboxRelayScheduler scheduler =
-                new OutboxRelayScheduler(outboxEventRepository, messagePublisher);
+                new OutboxRelayScheduler(
+                        outboxEventRepository,
+                        messagePublisher,
+                        telemetryManager);
 
         scheduler.processPendingOutboxEvents();
 
         assertEquals(1, event.getRetryCount());
         assertEquals(OutboxStatus.PENDING, event.getStatus());
         assertEquals("Invalid payload", event.getErrorMessage());
+        verify(telemetryManager).incrementOutboxRelayErrors();
     }
 
     @Test
@@ -101,7 +116,10 @@ class OutboxRelaySchedulerTest {
             return null;
         }).when(messagePublisher).publish(any(OutboxEvent.class));
         OutboxRelayScheduler scheduler =
-                new OutboxRelayScheduler(outboxEventRepository, messagePublisher);
+                new OutboxRelayScheduler(
+                        outboxEventRepository,
+                        messagePublisher,
+                        telemetryManager);
 
         scheduler.processPendingOutboxEvents();
 
@@ -110,6 +128,7 @@ class OutboxRelaySchedulerTest {
         assertEquals(OutboxStatus.PENDING, badEvent.getStatus());
         assertEquals(1, badEvent.getRetryCount());
         assertEquals(OutboxStatus.SENT, goodEvent.getStatus());
+        verify(telemetryManager).incrementOutboxRelayErrors();
     }
 
     private static OutboxEvent pendingEvent(Long id, int retryCount) {

@@ -2,6 +2,7 @@ package com.engonow.lms.scheduler;
 
 import com.engonow.lms.entity.OutboxEvent;
 import com.engonow.lms.enums.OutboxStatus;
+import com.engonow.lms.metrics.TelemetryManager;
 import com.engonow.lms.publisher.MessagePublisher;
 import com.engonow.lms.repository.OutboxEventRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ public class OutboxRelayScheduler {
 
     private final OutboxEventRepository outboxEventRepository;
     private final MessagePublisher messagePublisher;
+    private final TelemetryManager telemetryManager;
     private final AtomicBoolean relayRunning = new AtomicBoolean(false);
 
     @Scheduled(fixedDelayString = "${engonow.outbox.relay-delay-ms:500}")
@@ -62,6 +64,7 @@ public class OutboxRelayScheduler {
             event.setErrorMessage(null);
             outboxEventRepository.save(event);
         } catch (Exception ex) {
+            telemetryManager.incrementOutboxRelayErrors();
             log.error(
                     "[OUTBOX RELAY] Failed to publish outbox event id={}: {}",
                     event.getId(),

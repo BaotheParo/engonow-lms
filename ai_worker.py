@@ -29,7 +29,9 @@ from providers.consumer import (
     LocalEventPublisher,
 )
 from providers.factory import get_speaking_provider
+from telemetry.drift_monitor import CUSUMDriftDetector
 from telemetry.metrics import (
+    DRIFT_ALERTS_TOTAL,
     EVALUATION_LATENCY_SECONDS,
     EVALUATION_REQUESTS_TOTAL,
     GENUINE_WORD_COVERAGE,
@@ -45,6 +47,12 @@ logger = logging.getLogger("engonow.ai_worker")
 _result_publisher: BaseEventPublisher | None = None
 _evaluation_semaphore: asyncio.Semaphore | None = None
 _semaphore_loop: asyncio.AbstractEventLoop | None = None
+coverage_drift_detector = CUSUMDriftDetector(
+    target_mean=0.80,
+    std_dev=0.15,
+    slack_k=0.5,
+    threshold_h=4.0,
+)
 
 
 def _get_evaluation_semaphore() -> asyncio.Semaphore:
@@ -179,6 +187,29 @@ def _record_evaluation_metrics(
         )
 
 
+def _monitor_coverage_drift(result_payload: EventPayload) -> None:
+    """Update the coverage CUSUM without disrupting successful evaluations."""
+    if result_payload.get("status") != "SUCCESS":
+        return
+
+    try:
+        coverage = float(result_payload.get("genuine_word_coverage", 0.0))
+        if not coverage_drift_detector.update(coverage):
+            return
+
+        logger.critical(
+            "[DRIFT DETECTED] Genuine word coverage has significantly "
+            "degraded! Provider API may have changed. Triggering "
+            "recalibration alert."
+        )
+        coverage_drift_detector.reset()
+        DRIFT_ALERTS_TOTAL.inc()
+    except Exception:
+        logger.exception(
+            "[TELEMETRY] Failed to update genuine word coverage drift monitor"
+        )
+
+
 def _error_result(
     session_id: str,
     error: Exception,
@@ -296,6 +327,7 @@ async def process_speaking_request(event_payload: EventPayload) -> EventPayload:
             fallback=provider_name,
         )
         _normalize_result_status(result_payload)
+        _monitor_coverage_drift(result_payload)
         return result_payload
     except asyncio.CancelledError:
         raise

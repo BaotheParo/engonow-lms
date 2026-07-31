@@ -75,6 +75,15 @@ server:
       max: 200
       min-spare: 20
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    tags:
+      application: engonow-lms-backend
+
 # ─── Application-Specific Configuration ─────────────────────────────────────
 app:
   ai-service:

@@ -1,6 +1,8 @@
+import json
 import math
-import statistics
+import os
 import re
+import statistics
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 
@@ -105,6 +107,56 @@ class AcousticScore:
 TAU_MICRO      = 0.15
 TAU_NATURAL    = 0.50
 TAU_HESITATION = 2.00
+
+#  Segment-level pronunciation fallback thresholds
+DEFAULT_THRESHOLDS = {
+    "band_8": -0.18,
+    "band_7": -0.28,
+    "band_6": -0.38,
+    "band_5": -0.50,
+    "band_4": -0.65,
+}
+PR_THRESHOLD_KEYS = ("band_8", "band_7", "band_6", "band_5", "band_4")
+
+
+def load_pr_thresholds(
+    filepath: str | os.PathLike[str] = "calibration_config.json",
+) -> Dict[str, float]:
+    """Load a valid ordered threshold set or return isolated safe defaults."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as config_file:
+            data = json.load(config_file)
+        if not isinstance(data, dict):
+            raise ValueError("Calibration config must be a JSON object")
+
+        thresholds = {}
+        for key in PR_THRESHOLD_KEYS:
+            raw_value = data[key]
+            if isinstance(raw_value, bool) or not isinstance(
+                raw_value,
+                (int, float),
+            ):
+                raise ValueError(f"Calibration threshold {key} must be numeric")
+            value = float(raw_value)
+            if not math.isfinite(value):
+                raise ValueError(f"Calibration threshold {key} must be finite")
+            thresholds[key] = value
+
+        ordered_values = [thresholds[key] for key in PR_THRESHOLD_KEYS]
+        if not all(
+            higher > lower
+            for higher, lower in zip(
+                ordered_values,
+                ordered_values[1:],
+            )
+        ):
+            raise ValueError(
+                "Calibration thresholds must be strictly decreasing"
+            )
+        return thresholds
+    except (KeyError, OSError, TypeError, ValueError):
+        return DEFAULT_THRESHOLDS.copy()
+
 
 #  Function Word Set (for speaker normalisation)
 FUNCTION_WORDS = frozenset({
@@ -611,16 +663,32 @@ def compute_pronunciation_features(parsed: ParsedWhisperOutput) -> Pronunciation
             if segment.avg_logprob is not None
         ]
         global_avg = statistics.mean(avg_logprobs) if avg_logprobs else -0.5
+        thresholds = load_pr_thresholds()
 
-        if global_avg > -0.18:
+        if global_avg > thresholds.get(
+            "band_8",
+            DEFAULT_THRESHOLDS["band_8"],
+        ):
             pr_band = 8
-        elif global_avg > -0.28:
+        elif global_avg > thresholds.get(
+            "band_7",
+            DEFAULT_THRESHOLDS["band_7"],
+        ):
             pr_band = 7
-        elif global_avg > -0.38:
+        elif global_avg > thresholds.get(
+            "band_6",
+            DEFAULT_THRESHOLDS["band_6"],
+        ):
             pr_band = 6
-        elif global_avg > -0.50:
+        elif global_avg > thresholds.get(
+            "band_5",
+            DEFAULT_THRESHOLDS["band_5"],
+        ):
             pr_band = 5
-        elif global_avg > -0.65:
+        elif global_avg > thresholds.get(
+            "band_4",
+            DEFAULT_THRESHOLDS["band_4"],
+        ):
             pr_band = 4
         else:
             pr_band = 3

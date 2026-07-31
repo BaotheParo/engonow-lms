@@ -2,6 +2,7 @@ package com.engonow.lms.aop;
 
 import com.engonow.lms.annotation.Idempotent;
 import com.engonow.lms.exception.IdempotencyException;
+import com.engonow.lms.metrics.TelemetryManager;
 import com.engonow.lms.repository.IdempotencyRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +26,7 @@ import java.lang.reflect.Method;
 public class IdempotentAspect {
 
     private final IdempotencyRepository idempotencyRepository;
+    private final TelemetryManager telemetryManager;
     private final ExpressionParser expressionParser = new SpelExpressionParser();
 
     @Around("@annotation(idempotent)")
@@ -67,8 +69,15 @@ public class IdempotentAspect {
         log.debug("Checking idempotency for key: {} (TTL: {}ms) on method: {}", finalKey, ttlMillis, method.getName());
 
         // 5. Try lock
-        boolean locked = idempotencyRepository.tryLock(finalKey, ttlMillis);
+        boolean locked;
+        try {
+            locked = idempotencyRepository.tryLock(finalKey, ttlMillis);
+        } catch (IdempotencyException exception) {
+            telemetryManager.incrementIdempotencyConflict("WEBHOOK");
+            throw exception;
+        }
         if (!locked) {
+            telemetryManager.incrementIdempotencyConflict("WEBHOOK");
             log.warn("Duplicate request detected for key: {} on method: {}", finalKey, method.getName());
             throw new IdempotencyException(
                     "Request is already completed or currently processing.");

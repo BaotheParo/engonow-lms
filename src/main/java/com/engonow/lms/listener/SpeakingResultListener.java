@@ -3,6 +3,7 @@ package com.engonow.lms.listener;
 import com.engonow.lms.dto.SpeakingResultEventPayload;
 import com.engonow.lms.dto.SpeakingWebhookPayload;
 import com.engonow.lms.exception.IdempotencyException;
+import com.engonow.lms.metrics.TelemetryManager;
 import com.engonow.lms.repository.IdempotencyRepository;
 import com.engonow.lms.service.WebhookService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -22,6 +23,7 @@ public class SpeakingResultListener {
     private final ObjectMapper objectMapper;
     private final WebhookService webhookService;
     private final IdempotencyRepository idempotencyRepository;
+    private final TelemetryManager telemetryManager;
 
     /**
      * Parses and persists one speaking result. Processing failures are propagated so
@@ -44,6 +46,8 @@ public class SpeakingResultListener {
             idempotencyRepository.completeLock(
                     idempotencyKey,
                     IDEMPOTENCY_TTL_MILLIS);
+            telemetryManager.incrementProcessedResults(
+                    webhookPayload.status().name());
             log.info(
                     "[RESULT LISTENER] Successfully processed speaking result for session: {}, "
                             + "Status: {}",
