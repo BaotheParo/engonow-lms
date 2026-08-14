@@ -40,3 +40,14 @@ def get_speaking_provider() -> AbstractSpeakingProvider:
         f"[PROVIDER FACTORY] Unknown provider '{provider_name}'. "
         f"Valid: GROQ_LOCAL | AZURE"
     )
+
+
+def get_writing_provider():
+    """
+    Returns the singleton or newly initialized GeminiWritingProvider instance.
+    """
+    from providers.gemini_writing_provider import GeminiWritingProvider
+    from providers.config import WRITING_CONFIG
+    logger.info("[PROVIDER FACTORY] Initialising writing provider: %s", WRITING_CONFIG.ai_model_name)
+    return GeminiWritingProvider(config=WRITING_CONFIG)
+

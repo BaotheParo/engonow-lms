@@ -6,11 +6,95 @@ Uses python-dotenv. If python-dotenv is not installed, run:
     pip install python-dotenv
 """
 
+import asyncio
 import os
+import threading
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()   # Loads .env from the project root
+
+_PROMPT_LOCK = threading.Lock()
+
+
+@lru_cache(maxsize=32)
+def _load_prompt_sync(file_path: str) -> str:
+    """
+    Internal synchronous loader for prompt files with caching and resilient encoding.
+    """
+    path = Path(file_path)
+    if not path.is_absolute():
+        project_root = Path(__file__).resolve().parent.parent
+        resolved = (project_root / path).resolve()
+        if not resolved.exists():
+            resolved = path.resolve()
+    else:
+        resolved = path
+
+    if not resolved.exists() or not resolved.is_file():
+        raise FileNotFoundError(
+            f"Prompt file not found at '{file_path}' (resolved: '{resolved}'). "
+            "Please verify IELTS_WRITING_SYSTEM_PROMPT_PATH and IELTS_WRITING_USER_PROMPT_PATH environment variables."
+        )
+
+    return resolved.read_text(encoding="utf-8", errors="replace").strip()
+
+
+async def load_prompt_file(file_path: str) -> str:
+    """
+    Non-blocking, cached loader for external prompt template files.
+    Offloads synchronous file I/O to a worker thread via asyncio.to_thread.
+
+    Args:
+        file_path: Relative or absolute path to the prompt file.
+
+    Returns:
+        The text content of the prompt file.
+
+    Raises:
+        FileNotFoundError: If the file does not exist at the resolved path.
+    """
+    return await asyncio.to_thread(_load_prompt_sync, file_path)
+
+
+def clear_prompt_cache() -> None:
+    """Clears the prompt template cache to support zero-downtime hot reloads."""
+    with _PROMPT_LOCK:
+        _load_prompt_sync.cache_clear()
+
+
+@dataclass(frozen=True)
+class WritingProviderConfig:
+    """Immutable configuration snapshot for IELTS Writing evaluation."""
+
+    gemini_api_key: str
+    ai_model_name: str
+    system_prompt_path: str
+    user_prompt_path: str
+
+
+def load_writing_config() -> WritingProviderConfig:
+    """Builds WritingProviderConfig from environment variables."""
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    model_name = os.getenv(
+        "AI_MODEL_NAME", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    ).strip()
+
+    system_prompt_path = os.getenv(
+        "IELTS_WRITING_SYSTEM_PROMPT_PATH", "providers/prompts/writing_system.txt"
+    ).strip()
+    user_prompt_path = os.getenv(
+        "IELTS_WRITING_USER_PROMPT_PATH", "providers/prompts/writing_user.txt"
+    ).strip()
+
+    return WritingProviderConfig(
+        gemini_api_key=api_key,
+        ai_model_name=model_name,
+        system_prompt_path=system_prompt_path,
+        user_prompt_path=user_prompt_path,
+    )
 
 
 @dataclass(frozen=True)
@@ -131,3 +215,4 @@ def load_worker_config() -> WorkerConfig:
 # Loaded once at import time. All providers share this instance.
 CONFIG: ProviderConfig = load_provider_config()
 WORKER_CONFIG: WorkerConfig = load_worker_config()
+WRITING_CONFIG: WritingProviderConfig = load_writing_config()

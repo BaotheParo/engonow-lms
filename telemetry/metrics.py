@@ -28,9 +28,32 @@ DRIFT_ALERTS_TOTAL = Counter(
     "Total number of statistical drift alerts triggered",
 )
 
+WRITING_EVALUATION_REQUESTS_TOTAL = Counter(
+    "engonow_writing_evaluations_total",
+    "Total number of writing evaluation requests processed",
+    ["provider", "status"],
+)
+
+WRITING_EVALUATION_LATENCY_SECONDS = Histogram(
+    "engonow_writing_evaluation_latency_seconds",
+    "Latency of the AI writing evaluation process",
+    ["provider"],
+    buckets=(1.0, 2.5, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 60.0),
+)
+
+WRITING_EVALUATION_ERRORS_TOTAL = Counter(
+    "engonow_writing_evaluation_errors_total",
+    "Total number of writing evaluation errors",
+    ["provider", "error_type"],
+)
+
 __all__ = [
     "DRIFT_ALERTS_TOTAL",
     "EVALUATION_LATENCY_SECONDS",
     "EVALUATION_REQUESTS_TOTAL",
     "GENUINE_WORD_COVERAGE",
+    "WRITING_EVALUATION_ERRORS_TOTAL",
+    "WRITING_EVALUATION_LATENCY_SECONDS",
+    "WRITING_EVALUATION_REQUESTS_TOTAL",
 ]
+

@@ -174,3 +174,57 @@ class AbstractSpeakingProvider(ABC):
             processing_time_ms    = 0.0,
             provider_metadata     = {"error": error, "warnings": ["PIPELINE_FAILED"]},
         )
+
+
+class WritingEvaluationError(Exception):
+    """Base exception for all writing evaluation errors."""
+    pass
+
+
+class MalformedAIResponseError(WritingEvaluationError):
+    """Raised when the AI model returns invalid or unparseable JSON response."""
+    pass
+
+
+class AbstractWritingProvider(ABC):
+    """
+    Abstract interface for IELTS Writing evaluation providers.
+    
+    Concrete implementation:
+      - GeminiWritingProvider (providers/gemini_writing_provider.py)
+    """
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Returns the provider identifier string, e.g. 'GEMINI_WRITING'."""
+
+    @abstractmethod
+    async def evaluate_essay(
+        self,
+        task_type: str,
+        task_prompt: str,
+        essay_text: str,
+    ) -> dict:
+        """
+        Evaluates an IELTS Writing submission asynchronously.
+
+        Args:
+            task_type: IELTS task type ('TASK_1' or 'TASK_2').
+            task_prompt: Topic prompt / question text.
+            essay_text: The student's submitted essay text.
+
+        Returns:
+            Dictionary matching the WritingFeedbackDetail JSON schema.
+
+        Raises:
+            WritingEvaluationError: On API failures or technical pipeline errors.
+            MalformedAIResponseError: If model output cannot be decoded as valid JSON.
+        """
+        pass
+
+
+# Backward-compatible alias
+AbstractEvaluationProvider = AbstractWritingProvider
+
+

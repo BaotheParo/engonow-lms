@@ -1,0 +1,11 @@
+## TASK TYPE
+{task_type}
+
+## TOPIC PROMPT / ESSAY QUESTION
+{task_prompt}
+
+## STUDENT SUBMISSION TEXT
+{essay_text}
+
+## INSTRUCTIONS
+Grade this essay using the rubric, penalty model, Quote-First & Offset Protocol, and reasoning pipeline defined in your system instruction. Return ONLY a single valid JSON object matching the WritingFeedbackDetail schema exactly — no markdown code fences, no text before or after the JSON.
