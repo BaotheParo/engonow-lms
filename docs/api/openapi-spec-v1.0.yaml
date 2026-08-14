@@ -1,0 +1,667 @@
+openapi: 3.1.0
+info:
+  title: ENGONOW Smart LMS - AI Writing Subsystem API
+  version: 1.0.0
+  description: >
+    Official OpenAPI 3.1.0 specification for the IELTS AI Writing Subsystem of ENGONOW Smart LMS.
+    Covers asynchronous essay submission, transactional outbox ingestion, high-throughput Gemini 2.5 Flash
+    evaluation webhooks with Redis distributed idempotency locks, and detailed diagnostic reporting.
+  contact:
+    name: ENGONOW Core Architecture Team
+    email: dev-team@engonow.com
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.engonow.com
+    description: Production Environment
+  - url: https://staging-api.engonow.com
+    description: Staging Environment
+  - url: http://localhost:8080
+    description: Local Development Environment
+
+tags:
+  - name: Writing Submissions
+    description: Client-facing endpoints for submitting and querying IELTS essay evaluations.
+  - name: Writing Webhooks
+    description: Internal asynchronous callback endpoints for AI evaluation workers.
+
+paths:
+  /api/v1/writing/submissions/submit:
+    post:
+      tags:
+        - Writing Submissions
+      summary: Submit IELTS essay for asynchronous AI evaluation
+      description: >
+        Accepts a student essay submission, computes word count, generates a transactional outbox
+        event for the AI worker queue, and immediately returns HTTP 202 Accepted.
+      operationId: submitEssay
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WritingSubmissionRequestDTO'
+      responses:
+        '202':
+          description: Submission accepted for asynchronous AI grading.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritingSubmissionResponseDTO'
+        '400':
+          description: Invalid submission parameters or blank fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Concurrency conflict detected on submission creation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server or transactional outbox failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/writing/submissions/{submissionId}:
+    get:
+      tags:
+        - Writing Submissions
+      summary: Retrieve evaluation result for an IELTS essay submission
+      description: >
+        Retrieves the finalized IELTS scores, Cambridge band metrics, and detailed diagnostic
+        feedback for a submission. Returns HTTP 422 if evaluation is still ongoing.
+      operationId: getSubmissionResult
+      parameters:
+        - name: submissionId
+          in: path
+          required: true
+          description: Unique UUID of the writing submission.
+          schema:
+            type: string
+            format: uuid
+            example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        - name: studentId
+          in: query
+          required: true
+          description: Unique UUID of the authenticated student.
+          schema:
+            type: string
+            format: uuid
+            example: "a2effcb1-77d8-41a3-b6e1-73c4f60219c5"
+      responses:
+        '200':
+          description: Evaluation completed successfully; diagnostic report returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritingResultResponseDTO'
+        '404':
+          description: Submission not found for the given submissionId and studentId.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Submission is still being processed by the AI worker.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/writing/webhook/result:
+    post:
+      tags:
+        - Writing Webhooks
+      summary: Ingest AI worker evaluation callback payload
+      description: >
+        Internal webhook endpoint invoked by the Python AI Worker upon completing Gemini 2.5 Flash
+        evaluation. Protected by Redis distributed lock (`@Idempotent(key = "'webhook:writing:' + #payload.submissionId()")`).
+      operationId: handleEvaluationWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WritingWebhookPayloadDTO'
+      responses:
+        '200':
+          description: Webhook acknowledged and processed idempotently.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritingWebhookResponseDTO'
+        '400':
+          description: Malformed webhook payload or missing required score fields on success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Target submissionId does not exist in database.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Concurrent duplicate webhook invocation rejected by Redis distributed lock or optimistic lock.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Database or transaction persistence error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    # -------------------------------------------------------------
+    # Enumerations (100% Cross-Language Parity)
+    # -------------------------------------------------------------
+    TaskType:
+      type: string
+      enum:
+        - ACADEMIC_TASK1
+        - GENERAL_TASK1
+        - TASK2
+        - FULL_TEST
+      description: Category of IELTS writing assessment.
+
+    SubmissionStatus:
+      type: string
+      enum:
+        - PENDING
+        - PROCESSING
+        - SCORED
+        - FAILED
+      description: Current evaluation status of a submission.
+
+    EvaluatedBy:
+      type: string
+      enum:
+        - AI
+        - HUMAN
+        - HYBRID
+      description: Entity responsible for producing the grading result.
+
+    CorrectionErrorType:
+      type: string
+      enum:
+        - GRAMMAR
+        - VOCABULARY
+        - SPELLING
+        - PUNCTUATION
+        - COHESION
+        - TASK_RELEVANCE
+      description: Pedagogical taxonomy of identified writing issues.
+
+    ErrorSeverity:
+      type: string
+      enum:
+        - MINOR
+        - MAJOR
+        - CRITICAL
+      description: Impact of an error on IELTS criterion scoring.
+
+    WritingCriterion:
+      type: string
+      enum:
+        - TASK_ACHIEVEMENT
+        - TASK_RESPONSE
+        - COHERENCE_COHESION
+        - LEXICAL_RESOURCE
+        - GRAMMATICAL_RANGE_ACCURACY
+      description: Standard Cambridge IELTS evaluation criterion.
+
+    # -------------------------------------------------------------
+    # Request & Response DTOs
+    # -------------------------------------------------------------
+    WritingSubmissionRequestDTO:
+      type: object
+      required:
+        - studentId
+        - taskType
+        - taskPrompt
+        - essayText
+      properties:
+        studentId:
+          type: string
+          format: uuid
+          example: "a2effcb1-77d8-41a3-b6e1-73c4f60219c5"
+        taskType:
+          $ref: '#/components/schemas/TaskType'
+          example: "TASK2"
+        taskPrompt:
+          type: string
+          example: "Some people believe that unpaid community service should be a compulsory part of high school programmes. To what extent do you agree or disagree?"
+        essayText:
+          type: string
+          example: "In recent years, the debate over whether community work should be mandatory for high school students has gained significant attention..."
+
+    WritingSubmissionResponseDTO:
+      type: object
+      required:
+        - submissionId
+        - studentId
+        - taskType
+        - status
+        - wordCount
+        - createdAt
+      properties:
+        submissionId:
+          type: string
+          format: uuid
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        studentId:
+          type: string
+          format: uuid
+          example: "a2effcb1-77d8-41a3-b6e1-73c4f60219c5"
+        taskType:
+          $ref: '#/components/schemas/TaskType'
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+          example: "PENDING"
+        wordCount:
+          type: integer
+          example: 285
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-08-14T14:30:00Z"
+
+    WritingResultResponseDTO:
+      type: object
+      required:
+        - resultId
+        - submissionId
+        - taskType
+        - status
+        - taskAchievementScore
+        - coherenceCohesionScore
+        - lexicalResourceScore
+        - grammaticalRangeScore
+        - overallBand
+        - evaluatedBy
+        - feedbackDetail
+        - createdAt
+        - updatedAt
+      properties:
+        resultId:
+          type: string
+          format: uuid
+          example: "4c58d042-4f35-430b-a19f-d31e9c5f0f3e"
+        submissionId:
+          type: string
+          format: uuid
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        taskType:
+          $ref: '#/components/schemas/TaskType'
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+          example: "SCORED"
+        taskAchievementScore:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 9.0
+          example: 7.0
+        coherenceCohesionScore:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 9.0
+          example: 7.0
+        lexicalResourceScore:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 9.0
+          example: 7.0
+        grammaticalRangeScore:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 9.0
+          example: 7.0
+        overallBand:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 9.0
+          example: 7.0
+        evaluatedBy:
+          $ref: '#/components/schemas/EvaluatedBy'
+          example: "AI"
+        feedbackDetail:
+          $ref: '#/components/schemas/WritingFeedbackDetail'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    WritingWebhookPayloadDTO:
+      type: object
+      required:
+        - submissionId
+        - status
+      properties:
+        submissionId:
+          type: string
+          format: uuid
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+          example: "SCORED"
+        taskAchievementScore:
+          type: number
+          format: float
+          nullable: true
+          example: 7.0
+        coherenceCohesionScore:
+          type: number
+          format: float
+          nullable: true
+          example: 7.0
+        lexicalResourceScore:
+          type: number
+          format: float
+          nullable: true
+          example: 7.0
+        grammaticalRangeScore:
+          type: number
+          format: float
+          nullable: true
+          example: 7.0
+        overallBand:
+          type: number
+          format: float
+          nullable: true
+          example: 7.0
+        evaluatedBy:
+          $ref: '#/components/schemas/EvaluatedBy'
+          nullable: true
+          example: "AI"
+        feedbackDetail:
+          $ref: '#/components/schemas/WritingFeedbackDetail'
+        errorMessage:
+          type: string
+          nullable: true
+          example: null
+
+    WritingWebhookResponseDTO:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: "ACK"
+
+    ErrorResponse:
+      type: object
+      required:
+        - timestamp
+        - status
+        - error
+        - message
+        - path
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+          example: 400
+        error:
+          type: string
+          example: "Bad Request"
+        message:
+          type: string
+          example: "taskPrompt must not be blank"
+        path:
+          type: string
+          example: "/api/v1/writing/submissions/submit"
+
+    # -------------------------------------------------------------
+    # Detailed Diagnostic Feedback Schema (JSONB)
+    # -------------------------------------------------------------
+    WritingFeedbackDetail:
+      type: object
+      required:
+        - examinerSummary
+        - essayMetrics
+        - criteria
+        - corrections
+        - cohesiveDeviceAnalysis
+        - vocabularyUpgrades
+        - improvementTips
+      properties:
+        examinerSummary:
+          type: string
+          example: "A well-structured argumentative essay reaching Band 7.0 with fully developed core premises."
+        essayMetrics:
+          $ref: '#/components/schemas/EssayMetrics'
+        criteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/CriterionFeedback'
+        corrections:
+          type: array
+          items:
+            $ref: '#/components/schemas/SentenceCorrection'
+        cohesiveDeviceAnalysis:
+          $ref: '#/components/schemas/CohesiveDeviceAnalysis'
+        vocabularyUpgrades:
+          type: array
+          items:
+            $ref: '#/components/schemas/VocabularyUpgrade'
+        improvementTips:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImprovementTip'
+
+    EssayMetrics:
+      type: object
+      required:
+        - totalWords
+        - uniqueWords
+        - lexicalDiversityRatio
+        - averageSentenceLength
+        - complexSentencesRatio
+      properties:
+        totalWords:
+          type: integer
+          example: 285
+        uniqueWords:
+          type: integer
+          example: 142
+        lexicalDiversityRatio:
+          type: number
+          format: float
+          example: 0.498
+        averageSentenceLength:
+          type: number
+          format: float
+          example: 19.0
+        complexSentencesRatio:
+          type: number
+          format: float
+          example: 0.65
+
+    CriterionFeedback:
+      type: object
+      required:
+        - criterion
+        - score
+        - summary
+        - strengths
+        - weaknesses
+      properties:
+        criterion:
+          $ref: '#/components/schemas/WritingCriterion'
+          example: "TASK_RESPONSE"
+        score:
+          type: number
+          format: float
+          example: 7.0
+        summary:
+          type: string
+          example: "All components of the prompt addressed with a sustained stance throughout the response."
+        strengths:
+          type: array
+          items:
+            type: string
+          example:
+            - "Clear position established in introduction and supported across body paragraphs"
+        weaknesses:
+          type: array
+          items:
+            type: string
+          example:
+            - "Supporting evidence in paragraph 3 relies on general assertion rather than specific illustration"
+        bandGapAnalysis:
+          type: string
+          nullable: true
+          example: "To reach Band 8.0, extend supporting examples with granular counter-argument evaluation."
+
+    EnhancedOptions:
+      type: object
+      required:
+        - band7Option
+        - band8Option
+      properties:
+        band7Option:
+          type: string
+          example: "telecommuting yields considerable advantages for modern workforces"
+        band8Option:
+          type: string
+          example: "remote working models offer distinct operational efficiencies and personal autonomy"
+
+    SentenceCorrection:
+      type: object
+      required:
+        - startIndex
+        - endIndex
+        - originalSentence
+        - correctedSentence
+        - errorType
+        - severity
+        - explanation
+      properties:
+        startIndex:
+          type: integer
+          description: 0-indexed start character offset in original essay text.
+          example: 45
+        endIndex:
+          type: integer
+          description: 0-indexed end character offset in original essay text.
+          example: 85
+        originalSentence:
+          type: string
+          example: "working from home bring more benefits"
+        correctedSentence:
+          type: string
+          example: "working from home brings more benefits"
+        errorType:
+          $ref: '#/components/schemas/CorrectionErrorType'
+          example: "GRAMMAR"
+        severity:
+          $ref: '#/components/schemas/ErrorSeverity'
+          example: "MAJOR"
+        explanation:
+          type: string
+          example: "'Working from home' là danh động từ làm chủ ngữ số ít, do đó động từ phải chia số ít là 'brings'."
+        enhancedOptions:
+          $ref: '#/components/schemas/EnhancedOptions'
+
+    CohesiveDeviceAnalysis:
+      type: object
+      required:
+        - usedDevices
+        - overusedOrRepetitive
+        - suggestedTransitions
+      properties:
+        usedDevices:
+          type: array
+          items:
+            type: string
+          example:
+            - "In conclusion"
+            - "On the other hand"
+            - "Furthermore"
+        overusedOrRepetitive:
+          type: array
+          items:
+            type: string
+          example:
+            - "Furthermore"
+        suggestedTransitions:
+          type: array
+          items:
+            type: string
+          example:
+            - "Additionally"
+            - "Moreover"
+
+    VocabularyUpgrade:
+      type: object
+      required:
+        - originalWord
+        - contextInEssay
+        - academicAlternatives
+        - recommendedCollocations
+      properties:
+        originalWord:
+          type: string
+          example: "good"
+        contextInEssay:
+          type: string
+          example: "a good idea for workers"
+        academicAlternatives:
+          type: array
+          items:
+            type: string
+          example:
+            - "advantageous"
+            - "beneficial"
+            - "viable"
+        recommendedCollocations:
+          type: array
+          items:
+            type: string
+          example:
+            - "prove advantageous"
+            - "highly beneficial"
+
+    ImprovementTip:
+      type: object
+      required:
+        - category
+        - tipText
+        - targetBand
+      properties:
+        category:
+          type: string
+          example: "COHERENCE_COHESION"
+        tipText:
+          type: string
+          example: "Đa dạng hóa các liên từ chuyển đoạn để tránh cảm giác liên kết cơ học ở đầu mỗi đoạn thân bài."
+        targetBand:
+          type: number
+          format: float
+          example: 8.0

@@ -46,7 +46,6 @@ public class WritingSubmission {
     @Id
     @GeneratedValue
     @UuidGenerator
-    @ColumnDefault("gen_random_uuid()")
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
@@ -74,24 +73,20 @@ public class WritingSubmission {
 
     @NotNull
     @Enumerated(EnumType.STRING)
-    @ColumnDefault("'PENDING'")
     @Column(name = "status", nullable = false, length = 20)
     private SubmissionStatus status = SubmissionStatus.PENDING;
 
     @CreationTimestamp
-    @ColumnDefault("now()")
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @UpdateTimestamp
-    @ColumnDefault("now()")
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
     @Version
-    @ColumnDefault("0")
     @Column(name = "version", nullable = false)
-    private Long version;
+    private Long version = 0L;
 
     public void markAsProcessing() {
         status = SubmissionStatus.PROCESSING;

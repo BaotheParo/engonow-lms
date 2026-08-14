@@ -23,6 +23,12 @@ from providers.config import (
     load_prompt_file,
 )
 from providers.gemini_writing_provider import GeminiWritingProvider, _secure_format_prompt
+from providers.schemas import (
+    CorrectionErrorType,
+    ErrorSeverity,
+    TaskType,
+    WritingCriterion,
+)
 from telemetry.metrics import (
     WRITING_EVALUATION_ERRORS_TOTAL,
     WRITING_EVALUATION_REQUESTS_TOTAL,
@@ -83,7 +89,7 @@ class TestPromptFormatting(unittest.TestCase):
         dangerous_essay = "This essay contains {curly_braces} and {unexpected_keys: 123}."
         formatted = _secure_format_prompt(
             template=template,
-            task_type="TASK_2",
+            task_type="TASK2",
             task_prompt="Discuss advantages and {disadvantages}.",
             essay_text=dangerous_essay,
         )
@@ -115,7 +121,7 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
             },
             "criteria": [
                 {
-                    "criterion": "TR",
+                    "criterion": "TASK_RESPONSE",
                     "score": 7.0,
                     "summary": "All prompt components addressed with clear stance.",
                     "strengths": ["Clear position"],
@@ -123,21 +129,21 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
                     "bandGapAnalysis": "Extend supporting examples for Band 8.0.",
                 },
                 {
-                    "criterion": "CC",
+                    "criterion": "COHERENCE_COHESION",
                     "score": 7.0,
                     "summary": "Logical progression across paragraphs.",
                     "strengths": ["Good discourse markers"],
                     "weaknesses": ["Minor overuse of 'Furthermore'"],
                 },
                 {
-                    "criterion": "LR",
+                    "criterion": "LEXICAL_RESOURCE",
                     "score": 7.0,
                     "summary": "Precise vocabulary with minor collocation slips.",
                     "strengths": ["Academic lexicon"],
                     "weaknesses": ["Occasional unnatural pairing"],
                 },
                 {
-                    "criterion": "GRA",
+                    "criterion": "GRAMMATICAL_RANGE_ACCURACY",
                     "score": 7.0,
                     "summary": "Good mix of complex clauses with high accuracy.",
                     "strengths": ["Compound and complex structures"],
@@ -150,8 +156,8 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
                     "endIndex": 85,
                     "originalSentence": "working from home bring more benefits",
                     "correctedSentence": "working from home brings more benefits",
-                    "errorType": "SVA",
-                    "severity": "HIGH",
+                    "errorType": "GRAMMAR",
+                    "severity": "MAJOR",
                     "explanation": "Gerund subject requires singular verb 'brings'.",
                     "enhancedOptions": {
                         "band7Option": "telecommuting yields considerable advantages",
@@ -202,7 +208,7 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
 
         provider = GeminiWritingProvider(config=self.config)
         result = await provider.evaluate_essay(
-            task_type="TASK_2",
+            task_type="TASK2",
             task_prompt="Discuss the advantages and disadvantages of remote work {in detail}.",
             essay_text="In recent years, remote work {has} gained substantial popularity across the globe...",
         )
@@ -211,7 +217,10 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["essayMetrics"]["totalWords"], 285)
         self.assertEqual(len(result["criteria"]), 4)
         self.assertEqual(result["criteria"][0]["score"], 7.0)
+        self.assertEqual(result["criteria"][0]["criterion"], "TASK_RESPONSE")
         self.assertEqual(len(result["corrections"]), 1)
+        self.assertEqual(result["corrections"][0]["errorType"], "GRAMMAR")
+        self.assertEqual(result["corrections"][0]["severity"], "MAJOR")
 
     @patch("google.generativeai.GenerativeModel")
     @patch("google.generativeai.configure")
@@ -219,10 +228,10 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
         provider = GeminiWritingProvider(config=self.config)
 
         with self.assertRaises(WritingEvaluationError):
-            await provider.evaluate_essay(task_type="TASK_2", task_prompt="", essay_text="Valid essay")
+            await provider.evaluate_essay(task_type="TASK2", task_prompt="", essay_text="Valid essay")
 
         with self.assertRaises(WritingEvaluationError):
-            await provider.evaluate_essay(task_type="TASK_2", task_prompt="Valid prompt", essay_text="   ")
+            await provider.evaluate_essay(task_type="TASK2", task_prompt="Valid prompt", essay_text="   ")
 
     @patch("google.generativeai.GenerativeModel")
     @patch("google.generativeai.configure")
@@ -238,7 +247,7 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(MalformedAIResponseError) as ctx:
             await provider.evaluate_essay(
-                task_type="TASK_2",
+                task_type="TASK2",
                 task_prompt="Sample prompt",
                 essay_text="Sample essay content...",
             )
@@ -261,7 +270,7 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(MalformedAIResponseError) as ctx:
             await provider.evaluate_essay(
-                task_type="TASK_2",
+                task_type="TASK2",
                 task_prompt="Sample prompt",
                 essay_text="Sample essay content...",
             )
@@ -282,7 +291,7 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(MalformedAIResponseError):
             await provider.evaluate_essay(
-                task_type="TASK_2",
+                task_type="TASK2",
                 task_prompt="Sample prompt",
                 essay_text="Sample essay content...",
             )
@@ -298,7 +307,7 @@ class TestGeminiWritingProvider(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(WritingEvaluationError) as ctx:
             await provider.evaluate_essay(
-                task_type="TASK_2",
+                task_type="TASK2",
                 task_prompt="Sample prompt",
                 essay_text="Sample essay content...",
             )

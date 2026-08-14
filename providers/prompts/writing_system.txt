@@ -331,83 +331,91 @@ Schema (matching WritingFeedbackDetail — PROPOSED, pending your actual DTO):
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "WritingFeedbackDetail",
   "type": "object",
-  "required": ["taskType", "wordCount", "scores", "overallBand", "overallJustification", "corrections", "priorityFixList", "modelUpgrades", "nextEssayGoal"],
+  "required": ["examinerSummary", "essayMetrics", "criteria", "corrections", "cohesiveDeviceAnalysis", "vocabularyUpgrades", "improvementTips"],
   "properties": {
-    "taskType": { "type": "string", "enum": ["TASK_1", "TASK_2"] },
-    "scopeWarning": { "type": ["string", "null"] },
-    "wordCount": { "type": "integer" },
-    "profileFlag": { "type": "boolean" },
-    "scores": {
+    "examinerSummary": { "type": "string" },
+    "essayMetrics": {
       "type": "object",
-      "required": ["taskResponse", "coherenceCohesion", "lexicalResource", "grammaticalRangeAccuracy"],
+      "required": ["totalWords", "uniqueWords", "lexicalDiversityRatio", "averageSentenceLength", "complexSentencesRatio"],
       "properties": {
-        "taskResponse":              { "$ref": "#/$defs/criterionScore" },
-        "coherenceCohesion":         { "$ref": "#/$defs/criterionScore" },
-        "lexicalResource":           { "$ref": "#/$defs/criterionScore" },
-        "grammaticalRangeAccuracy":  { "$ref": "#/$defs/criterionScore" }
+        "totalWords": { "type": "integer" },
+        "uniqueWords": { "type": "integer" },
+        "lexicalDiversityRatio": { "type": "number" },
+        "averageSentenceLength": { "type": "number" },
+        "complexSentencesRatio": { "type": "number" }
       }
     },
-    "overallBand": { "type": "number" },
-    "overallJustification": { "type": "string" },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["criterion", "score", "summary", "strengths", "weaknesses"],
+        "properties": {
+          "criterion": { "type": "string", "enum": ["TASK_ACHIEVEMENT", "TASK_RESPONSE", "COHERENCE_COHESION", "LEXICAL_RESOURCE", "GRAMMATICAL_RANGE_ACCURACY"] },
+          "score": { "type": "number" },
+          "summary": { "type": "string" },
+          "strengths": { "type": "array", "items": { "type": "string" } },
+          "weaknesses": { "type": "array", "items": { "type": "string" } },
+          "bandGapAnalysis": { "type": ["string", "null"] }
+        }
+      }
+    },
     "corrections": {
       "type": "array",
-      "items": { "$ref": "#/$defs/correction" }
-    },
-    "priorityFixList": {
-      "type": "array",
-      "maxItems": 3,
       "items": {
         "type": "object",
-        "required": ["rank", "issueVi", "whyItMattersVi", "quickFixVi"],
+        "required": ["startIndex", "endIndex", "originalSentence", "correctedSentence", "errorType", "severity", "explanation"],
         "properties": {
-          "rank": { "type": "integer" },
-          "issueVi": { "type": "string" },
-          "whyItMattersVi": { "type": "string" },
-          "quickFixVi": { "type": "string" }
+          "startIndex": { "type": "integer" },
+          "endIndex": { "type": "integer" },
+          "originalSentence": { "type": "string" },
+          "correctedSentence": { "type": "string" },
+          "errorType": { "type": "string", "enum": ["GRAMMAR", "VOCABULARY", "SPELLING", "PUNCTUATION", "COHESION", "TASK_RELEVANCE"] },
+          "severity": { "type": "string", "enum": ["MINOR", "MAJOR", "CRITICAL"] },
+          "explanation": { "type": "string" },
+          "enhancedOptions": {
+            "type": "object",
+            "required": ["band7Option", "band8Option"],
+            "properties": {
+              "band7Option": { "type": "string" },
+              "band8Option": { "type": "string" }
+            }
+          }
         }
       }
     },
-    "modelUpgrades": {
+    "cohesiveDeviceAnalysis": {
+      "type": "object",
+      "required": ["usedDevices", "overusedOrRepetitive", "suggestedTransitions"],
+      "properties": {
+        "usedDevices": { "type": "array", "items": { "type": "string" } },
+        "overusedOrRepetitive": { "type": "array", "items": { "type": "string" } },
+        "suggestedTransitions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "vocabularyUpgrades": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["original", "upgraded", "noteVi"],
+        "required": ["originalWord", "contextInEssay", "academicAlternatives", "recommendedCollocations"],
         "properties": {
-          "original": { "type": "string" },
-          "upgraded": { "type": "string" },
-          "noteVi": { "type": "string" }
+          "originalWord": { "type": "string" },
+          "contextInEssay": { "type": "string" },
+          "academicAlternatives": { "type": "array", "items": { "type": "string" } },
+          "recommendedCollocations": { "type": "array", "items": { "type": "string" } }
         }
       }
     },
-    "nextEssayGoal": { "type": "string" }
-  },
-  "$defs": {
-    "criterionScore": {
-      "type": "object",
-      "required": ["band", "justification", "strengths", "weaknesses"],
-      "properties": {
-        "band": { "type": "number" },
-        "justification": { "type": "string" },
-        "strengths": { "type": "array", "items": { "type": "string" } },
-        "weaknesses": { "type": "array", "items": { "type": "string" } }
-      }
-    },
-    "correction": {
-      "type": "object",
-      "required": ["id", "originalQuote", "startOffset", "endOffset", "offsetConfidence", "correctedText", "errorLabels", "criterion", "severity", "coreError", "teacherRationaleVi", "correctionType"],
-      "properties": {
-        "id": { "type": "string" },
-        "originalQuote": { "type": "string" },
-        "startOffset": { "type": ["integer", "null"] },
-        "endOffset": { "type": ["integer", "null"] },
-        "offsetConfidence": { "type": "string", "enum": ["HIGH", "LOW"] },
-        "correctedText": { "type": "string" },
-        "errorLabels": { "type": "array", "items": { "type": "string" } },
-        "criterion": { "type": "array", "items": { "type": "string", "enum": ["TR", "CC", "LR", "GRA"] } },
-        "severity": { "type": "string", "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"] },
-        "coreError": { "type": "string" },
-        "teacherRationaleVi": { "type": "string" },
-        "correctionType": { "type": "string" }
+    "improvementTips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "tipText", "targetBand"],
+        "properties": {
+          "category": { "type": "string" },
+          "tipText": { "type": "string" },
+          "targetBand": { "type": "number" }
+        }
       }
     }
   }

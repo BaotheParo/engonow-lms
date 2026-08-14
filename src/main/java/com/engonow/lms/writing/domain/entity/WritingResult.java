@@ -57,7 +57,6 @@ public class WritingResult {
     @Id
     @GeneratedValue
     @UuidGenerator
-    @ColumnDefault("gen_random_uuid()")
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
@@ -109,7 +108,7 @@ public class WritingResult {
     @NotNull
     @Valid
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "feedback_detail", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "feedback_detail", nullable = false)
     private WritingFeedbackDetail feedbackDetail;
 
     @NotBlank
@@ -119,18 +118,15 @@ public class WritingResult {
 
     @NotNull
     @Enumerated(EnumType.STRING)
-    @ColumnDefault("'AI_AUTO'")
     @Column(name = "evaluated_by", nullable = false, updatable = false, length = 20)
     private EvaluatedBy evaluatedBy = EvaluatedBy.AI_AUTO;
 
     @NotNull
     @Min(1)
-    @ColumnDefault("1")
     @Column(name = "result_version", nullable = false, updatable = false)
     private Integer resultVersion = 1;
 
     @NotNull
-    @ColumnDefault("true")
     @Column(name = "is_current", nullable = false)
     private Boolean isCurrent = true;
 
@@ -139,14 +135,12 @@ public class WritingResult {
     private Instant evaluatedAt;
 
     @CreationTimestamp
-    @ColumnDefault("now()")
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @Version
-    @ColumnDefault("0")
     @Column(name = "version", nullable = false)
-    private Long version;
+    private Long version = 0L;
 
     /** Marks this result as historical before its successor becomes current. */
     public void supersede() {

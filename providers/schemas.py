@@ -3,11 +3,46 @@ providers/schemas.py
 ====================
 Pydantic v2 domain schemas for IELTS Writing evaluation and feedback details.
 Maps 1:1 with Java backend DTOs and enterprise LMS database contracts with
-strict schema enforcement and IELTS band validation.
+strict schema enforcement, Str-Enums, and IELTS band validation.
 """
 
-from typing import List, Optional
+from enum import Enum
+from typing import Any, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class TaskType(str, Enum):
+    """Supported IELTS Writing task categories."""
+    ACADEMIC_TASK1 = "ACADEMIC_TASK1"
+    GENERAL_TASK1 = "GENERAL_TASK1"
+    TASK2 = "TASK2"
+    FULL_TEST = "FULL_TEST"
+
+
+class CorrectionErrorType(str, Enum):
+    """Taxonomy used to classify sentence-level corrections."""
+    GRAMMAR = "GRAMMAR"
+    VOCABULARY = "VOCABULARY"
+    SPELLING = "SPELLING"
+    PUNCTUATION = "PUNCTUATION"
+    COHESION = "COHESION"
+    TASK_RELEVANCE = "TASK_RELEVANCE"
+
+
+class ErrorSeverity(str, Enum):
+    """Pedagogical impact of a detected writing error."""
+    MINOR = "MINOR"
+    MAJOR = "MAJOR"
+    CRITICAL = "CRITICAL"
+
+
+class WritingCriterion(str, Enum):
+    """Official IELTS assessment criteria."""
+    TASK_ACHIEVEMENT = "TASK_ACHIEVEMENT"
+    TASK_RESPONSE = "TASK_RESPONSE"
+    COHERENCE_COHESION = "COHERENCE_COHESION"
+    LEXICAL_RESOURCE = "LEXICAL_RESOURCE"
+    GRAMMATICAL_RANGE_ACCURACY = "GRAMMATICAL_RANGE_ACCURACY"
 
 
 def _validate_ielts_band_increment(v: float, field_name: str) -> float:
@@ -57,12 +92,57 @@ class SentenceCorrection(BaseModel):
     endIndex: int = Field(..., description="0-indexed end character offset in original essay")
     originalSentence: str = Field(..., description="Verbatim original text span containing the issue")
     correctedSentence: str = Field(..., description="Minimum-reconstruction corrected sentence")
-    errorType: str = Field(..., description="Category of error, e.g. GRAMMAR, SVA, COLLOCATION")
-    severity: str = Field(..., description="Severity level: CRITICAL, HIGH, MEDIUM, LOW")
+    errorType: CorrectionErrorType = Field(..., description="Category of error")
+    severity: ErrorSeverity = Field(..., description="Severity level: MINOR, MAJOR, CRITICAL")
     explanation: str = Field(..., description="Pedagogical explanation in Vietnamese")
     enhancedOptions: Optional[EnhancedOptions] = Field(
         default=None, description="Optional Band 7/8 upgrade suggestions"
     )
+
+    @field_validator("errorType", mode="before")
+    @classmethod
+    def normalize_error_type(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v_clean = v.strip().upper()
+            mapping = {
+                "SVA": CorrectionErrorType.GRAMMAR,
+                "SUBJECT_VERB_AGREEMENT": CorrectionErrorType.GRAMMAR,
+                "TENSE": CorrectionErrorType.GRAMMAR,
+                "VERB_TENSE": CorrectionErrorType.GRAMMAR,
+                "PREPOSITION": CorrectionErrorType.GRAMMAR,
+                "ARTICLE": CorrectionErrorType.GRAMMAR,
+                "SYNTAX": CorrectionErrorType.GRAMMAR,
+                "WORD_CHOICE": CorrectionErrorType.VOCABULARY,
+                "COLLOCATION": CorrectionErrorType.VOCABULARY,
+                "LEXICAL": CorrectionErrorType.VOCABULARY,
+                "LEXICAL_PRECISION": CorrectionErrorType.VOCABULARY,
+                "SPELLING": CorrectionErrorType.SPELLING,
+                "PUNCTUATION": CorrectionErrorType.PUNCTUATION,
+                "COHESION": CorrectionErrorType.COHESION,
+                "TASK_RESPONSE": CorrectionErrorType.TASK_RELEVANCE,
+                "TASK_RELEVANCE": CorrectionErrorType.TASK_RELEVANCE,
+                "OFF_TOPIC": CorrectionErrorType.TASK_RELEVANCE,
+            }
+            if v_clean in mapping:
+                return mapping[v_clean]
+        return v
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def normalize_severity(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v_clean = v.strip().upper()
+            mapping = {
+                "LOW": ErrorSeverity.MINOR,
+                "MEDIUM": ErrorSeverity.MAJOR,
+                "HIGH": ErrorSeverity.MAJOR,
+                "MINOR": ErrorSeverity.MINOR,
+                "MAJOR": ErrorSeverity.MAJOR,
+                "CRITICAL": ErrorSeverity.CRITICAL,
+            }
+            if v_clean in mapping:
+                return mapping[v_clean]
+        return v
 
 
 class CohesiveDeviceAnalysis(BaseModel):
@@ -97,11 +177,11 @@ class VocabularyUpgrade(BaseModel):
 
 
 class CriterionFeedback(BaseModel):
-    """Individual IELTS criterion assessment (TR, CC, LR, GRA)."""
+    """Individual IELTS criterion assessment."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    criterion: str = Field(..., description="Criterion identifier: TR, CC, LR, GRA")
+    criterion: WritingCriterion = Field(..., description="Criterion identifier")
     score: float = Field(..., description="Criterion band score in 0.5 step increments")
     summary: str = Field(..., description="Detailed justification based on Cambridge descriptors")
     strengths: List[str] = Field(
@@ -113,6 +193,27 @@ class CriterionFeedback(BaseModel):
     bandGapAnalysis: Optional[str] = Field(
         default=None, description="Actionable gap analysis to reach the next band level"
     )
+
+    @field_validator("criterion", mode="before")
+    @classmethod
+    def normalize_criterion(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v_clean = v.strip().upper()
+            mapping = {
+                "TR": WritingCriterion.TASK_RESPONSE,
+                "TA": WritingCriterion.TASK_ACHIEVEMENT,
+                "CC": WritingCriterion.COHERENCE_COHESION,
+                "LR": WritingCriterion.LEXICAL_RESOURCE,
+                "GRA": WritingCriterion.GRAMMATICAL_RANGE_ACCURACY,
+                "TASK_RESPONSE": WritingCriterion.TASK_RESPONSE,
+                "TASK_ACHIEVEMENT": WritingCriterion.TASK_ACHIEVEMENT,
+                "COHERENCE_COHESION": WritingCriterion.COHERENCE_COHESION,
+                "LEXICAL_RESOURCE": WritingCriterion.LEXICAL_RESOURCE,
+                "GRAMMATICAL_RANGE_ACCURACY": WritingCriterion.GRAMMATICAL_RANGE_ACCURACY,
+            }
+            if v_clean in mapping:
+                return mapping[v_clean]
+        return v
 
     @field_validator("score")
     @classmethod

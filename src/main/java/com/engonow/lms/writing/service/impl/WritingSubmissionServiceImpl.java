@@ -45,6 +45,16 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
         log.info("Received IELTS Writing submission request for student: {}, taskType: {}",
             request.studentId(), request.taskType());
 
+        // 1. Fail-fast serialization before touching DB or repositories
+        String serializedPayload;
+        try {
+            serializedPayload = objectMapper.writeValueAsString(request);
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize writing submission request to JSON: {}", e.getMessage(), e);
+            throw new IllegalArgumentException("Failed to serialize writing submission request to JSON", e);
+        }
+
+        // 2. Persist submission in PENDING status
         int wordCount = WritingSubmissionRequestDTO.countWords(request.essayText());
 
         WritingSubmission submission = new WritingSubmission();
@@ -57,14 +67,7 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
 
         WritingSubmission savedSubmission = writingSubmissionRepository.save(submission);
 
-        String serializedPayload;
-        try {
-            serializedPayload = objectMapper.writeValueAsString(request);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize writing submission request to JSON: {}", e.getMessage(), e);
-            throw new IllegalStateException("Failed to serialize writing submission event payload", e);
-        }
-
+        // 3. Persist corresponding Transactional Outbox event
         OutboxEvent outboxEvent = OutboxEvent.builder()
             .aggregateType("WRITING_SUBMISSION")
             .aggregateId(savedSubmission.getId().toString())

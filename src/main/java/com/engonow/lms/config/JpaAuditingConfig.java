@@ -15,7 +15,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  */
 @Configuration
 @EnableJpaAuditing
-@EnableJpaRepositories(basePackages = "com.engonow.lms.repository")
+@EnableJpaRepositories(basePackages = {"com.engonow.lms.repository", "com.engonow.lms.writing.repository"})
 public class JpaAuditingConfig {
     // No beans needed — @EnableJpaAuditing does all the wiring.
 }
