@@ -24,6 +24,7 @@ public record SentenceCorrection(
     @NotNull @Valid EnhancedOptions enhancedOptions
 ) {
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @AssertTrue(message = "endIndex must be greater than startIndex")
     public boolean isIndexRangeValid() {
         return startIndex == null || endIndex == null || endIndex > startIndex;

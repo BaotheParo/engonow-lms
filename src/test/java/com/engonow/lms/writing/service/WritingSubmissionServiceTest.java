@@ -1,6 +1,7 @@
 package com.engonow.lms.writing.service;
 
 import com.engonow.lms.entity.OutboxEvent;
+import com.engonow.lms.enums.OutboxStatus;
 import com.engonow.lms.repository.OutboxEventRepository;
 import com.engonow.lms.writing.domain.entity.WritingResult;
 import com.engonow.lms.writing.domain.entity.WritingSubmission;
@@ -16,11 +17,14 @@ import com.engonow.lms.writing.dto.WritingResultResponseDTO;
 import com.engonow.lms.writing.dto.WritingSubmissionRequestDTO;
 import com.engonow.lms.writing.dto.WritingSubmissionResponseDTO;
 import com.engonow.lms.writing.dto.WritingWebhookPayloadDTO;
+import com.engonow.lms.writing.event.OutboxEventCreatedLocalEvent;
 import com.engonow.lms.writing.exception.WritingSubmissionNotFoundException;
 import com.engonow.lms.writing.exception.WritingSubmissionProcessingException;
 import com.engonow.lms.writing.repository.WritingResultRepository;
 import com.engonow.lms.writing.repository.WritingSubmissionRepository;
 import com.engonow.lms.writing.service.impl.WritingSubmissionServiceImpl;
+import com.engonow.lms.writing.event.WritingEvaluationCompletedPayload;
+import com.engonow.lms.writing.event.WritingEvaluationFailedPayload;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +35,13 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -57,8 +68,14 @@ class WritingSubmissionServiceTest {
     @Mock
     private OutboxEventRepository outboxEventRepository;
 
+    @Mock
+    private com.engonow.lms.repository.InboxEventRepository inboxEventRepository;
+
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
     @Spy
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
     @InjectMocks
     private WritingSubmissionServiceImpl writingSubmissionService;
@@ -106,6 +123,12 @@ class WritingSubmissionServiceTest {
             return sub;
         });
 
+        when(outboxEventRepository.save(any(OutboxEvent.class))).thenAnswer(invocation -> {
+            OutboxEvent event = invocation.getArgument(0);
+            event.setId(UUID.randomUUID());
+            return event;
+        });
+
         WritingSubmissionResponseDTO response = writingSubmissionService.submitEssay(request);
 
         assertThat(response).isNotNull();
@@ -119,7 +142,14 @@ class WritingSubmissionServiceTest {
         OutboxEvent outboxEvent = outboxCaptor.getValue();
         assertThat(outboxEvent.getAggregateType()).isEqualTo("WRITING_SUBMISSION");
         assertThat(outboxEvent.getAggregateId()).isEqualTo(submissionId.toString());
-        assertThat(outboxEvent.getEventType()).isEqualTo("WRITING_SUBMISSION_CREATED");
+        assertThat(outboxEvent.getEventType()).isEqualTo("WRITING_EVALUATION_REQUESTED");
+        assertThat(outboxEvent.getStatus()).isEqualTo(OutboxStatus.PENDING);
+
+        ArgumentCaptor<OutboxEventCreatedLocalEvent> localEventCaptor = ArgumentCaptor.forClass(OutboxEventCreatedLocalEvent.class);
+        verify(applicationEventPublisher).publishEvent(localEventCaptor.capture());
+        OutboxEventCreatedLocalEvent localEvent = localEventCaptor.getValue();
+        assertThat(localEvent.topic()).isEqualTo(WritingSubmissionServiceImpl.WRITING_EVALUATION_REQUESTED_TOPIC);
+        assertThat(localEvent.partitionKey()).isEqualTo(submissionId.toString());
     }
 
     @Test
@@ -248,6 +278,120 @@ class WritingSubmissionServiceTest {
 
         assertThat(submission.getStatus()).isEqualTo(SubmissionStatus.FAILED);
         verify(writingResultRepository, never()).save(any());
+        verify(writingSubmissionRepository).save(submission);
+    }
+
+    @Test
+    @DisplayName("processEvaluationCompletedEvent successfully stores result, calculates Cambridge band, and transitions submission to SCORED")
+    void processEvaluationCompletedEvent_Success() {
+        WritingSubmission submission = new WritingSubmission();
+        submission.setId(submissionId);
+        submission.setStudentId(studentId);
+        submission.setStatus(SubmissionStatus.PENDING);
+
+        WritingEvaluationCompletedPayload payload = new WritingEvaluationCompletedPayload(
+            submissionId,
+            new BigDecimal("6.0"),
+            new BigDecimal("5.0"),
+            new BigDecimal("6.0"),
+            new BigDecimal("5.0"),
+            new BigDecimal("5.5"),
+            sampleFeedbackDetail
+        );
+
+        UUID idempotencyKey = UUID.randomUUID();
+        com.engonow.lms.writing.event.EventEnvelope<WritingEvaluationCompletedPayload> envelope =
+            com.engonow.lms.writing.event.EventEnvelope.of(
+                "WRITING_EVALUATION_COMPLETED",
+                idempotencyKey,
+                submissionId.toString(),
+                "trace-123",
+                "engonow-ai-writing-service",
+                payload
+            );
+
+        when(inboxEventRepository.tryAcquireInbox(any(), eq(idempotencyKey), any(), any(), any())).thenReturn(1);
+        when(writingSubmissionRepository.findById(submissionId)).thenReturn(Optional.of(submission));
+        when(writingResultRepository.findBySubmissionIdOrderByResultVersionDesc(submissionId)).thenReturn(List.of());
+
+        writingSubmissionService.processEvaluationCompletedEvent(envelope, "{}");
+
+        verify(writingResultRepository).invalidateCurrentResult(submissionId);
+        ArgumentCaptor<WritingResult> resultCaptor = ArgumentCaptor.forClass(WritingResult.class);
+        verify(writingResultRepository).save(resultCaptor.capture());
+        WritingResult savedResult = resultCaptor.getValue();
+
+        assertThat(savedResult.getOverallBand()).isEqualByComparingTo(new BigDecimal("5.5"));
+        assertThat(savedResult.getIsCurrent()).isTrue();
+        assertThat(savedResult.getResultVersion()).isEqualTo(1);
+        assertThat(submission.getStatus()).isEqualTo(SubmissionStatus.SCORED);
+    }
+
+    @Test
+    @DisplayName("processEvaluationCompletedEvent skips processing when inbox returns duplicate (0 rows acquired)")
+    void processEvaluationCompletedEvent_DuplicateSkipped() {
+        WritingEvaluationCompletedPayload payload = new WritingEvaluationCompletedPayload(
+            submissionId,
+            new BigDecimal("6.0"),
+            new BigDecimal("5.0"),
+            new BigDecimal("6.0"),
+            new BigDecimal("5.0"),
+            new BigDecimal("5.5"),
+            sampleFeedbackDetail
+        );
+
+        UUID idempotencyKey = UUID.randomUUID();
+        com.engonow.lms.writing.event.EventEnvelope<WritingEvaluationCompletedPayload> envelope =
+            com.engonow.lms.writing.event.EventEnvelope.of(
+                "WRITING_EVALUATION_COMPLETED",
+                idempotencyKey,
+                submissionId.toString(),
+                "trace-123",
+                "engonow-ai-writing-service",
+                payload
+            );
+
+        when(inboxEventRepository.tryAcquireInbox(any(), eq(idempotencyKey), any(), any(), any())).thenReturn(0);
+
+        writingSubmissionService.processEvaluationCompletedEvent(envelope, "{}");
+
+        verify(writingSubmissionRepository, never()).findById(any());
+        verify(writingResultRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("processEvaluationFailedEvent marks submission as FAILED")
+    void processEvaluationFailedEvent_Success() {
+        WritingSubmission submission = new WritingSubmission();
+        submission.setId(submissionId);
+        submission.setStudentId(studentId);
+        submission.setStatus(SubmissionStatus.PENDING);
+
+        WritingEvaluationFailedPayload payload = new WritingEvaluationFailedPayload(
+            submissionId,
+            "GEMINI_TIMEOUT",
+            "Service timed out",
+            false,
+            java.time.Instant.now()
+        );
+
+        UUID idempotencyKey = UUID.randomUUID();
+        com.engonow.lms.writing.event.EventEnvelope<WritingEvaluationFailedPayload> envelope =
+            com.engonow.lms.writing.event.EventEnvelope.of(
+                "WRITING_EVALUATION_FAILED",
+                idempotencyKey,
+                submissionId.toString(),
+                "trace-fail",
+                "engonow-ai-writing-service",
+                payload
+            );
+
+        when(inboxEventRepository.tryAcquireInbox(any(), eq(idempotencyKey), any(), any(), any())).thenReturn(1);
+        when(writingSubmissionRepository.findById(submissionId)).thenReturn(Optional.of(submission));
+
+        writingSubmissionService.processEvaluationFailedEvent(envelope, "{}");
+
+        assertThat(submission.getStatus()).isEqualTo(SubmissionStatus.FAILED);
         verify(writingSubmissionRepository).save(submission);
     }
 }

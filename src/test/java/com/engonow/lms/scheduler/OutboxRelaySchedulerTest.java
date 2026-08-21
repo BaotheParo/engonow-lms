@@ -11,6 +11,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -33,41 +35,60 @@ class OutboxRelaySchedulerTest {
     @Mock
     private TelemetryManager telemetryManager;
 
+    @Mock
+    private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+
+    private void mockTransactionTemplate() {
+        when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            org.springframework.transaction.support.TransactionCallback<?> callback = invocation.getArgument(0);
+            return callback.doInTransaction(null);
+        });
+    }
+
     @Test
     void publishesPendingEventExactlyOnceAndMarksItSent() {
-        OutboxEvent event = pendingEvent(1L, 0);
+        mockTransactionTemplate();
+        OutboxEvent event = pendingEvent(UUID.randomUUID(), 0);
         when(outboxEventRepository.findTop100ByStatusOrderByCreatedAtAsc(
                 OutboxStatus.PENDING))
                 .thenReturn(List.of(event));
+        when(outboxEventRepository.findById(event.getId())).thenReturn(Optional.of(event));
+
         OutboxRelayScheduler scheduler =
                 new OutboxRelayScheduler(
                         outboxEventRepository,
                         messagePublisher,
-                        telemetryManager);
+                        telemetryManager,
+                        transactionTemplate);
 
         scheduler.processPendingOutboxEvents();
 
         verify(messagePublisher, times(1)).publish(event);
         verify(outboxEventRepository).save(event);
-        assertEquals(OutboxStatus.SENT, event.getStatus());
+        assertEquals(OutboxStatus.PUBLISHED, event.getStatus());
         assertEquals(0, event.getRetryCount());
         assertNull(event.getErrorMessage());
     }
 
     @Test
     void marksEventFailedWhenThirdPublishAttemptFails() {
-        OutboxEvent event = pendingEvent(2L, 2);
+        mockTransactionTemplate();
+        OutboxEvent event = pendingEvent(UUID.randomUUID(), 2);
         when(outboxEventRepository.findTop100ByStatusOrderByCreatedAtAsc(
                 OutboxStatus.PENDING))
                 .thenReturn(List.of(event));
+        when(outboxEventRepository.findById(event.getId())).thenReturn(Optional.of(event));
+
         doThrow(new IllegalStateException("Kafka unavailable"))
                 .when(messagePublisher)
                 .publish(event);
+
         OutboxRelayScheduler scheduler =
                 new OutboxRelayScheduler(
                         outboxEventRepository,
                         messagePublisher,
-                        telemetryManager);
+                        telemetryManager,
+                        transactionTemplate);
 
         scheduler.processPendingOutboxEvents();
 
@@ -81,18 +102,23 @@ class OutboxRelaySchedulerTest {
 
     @Test
     void keepsEventPendingBeforeRetryLimit() {
-        OutboxEvent event = pendingEvent(3L, 0);
+        mockTransactionTemplate();
+        OutboxEvent event = pendingEvent(UUID.randomUUID(), 0);
         when(outboxEventRepository.findTop100ByStatusOrderByCreatedAtAsc(
                 OutboxStatus.PENDING))
                 .thenReturn(List.of(event));
+        when(outboxEventRepository.findById(event.getId())).thenReturn(Optional.of(event));
+
         doThrow(new IllegalArgumentException("Invalid payload"))
                 .when(messagePublisher)
                 .publish(event);
+
         OutboxRelayScheduler scheduler =
                 new OutboxRelayScheduler(
                         outboxEventRepository,
                         messagePublisher,
-                        telemetryManager);
+                        telemetryManager,
+                        transactionTemplate);
 
         scheduler.processPendingOutboxEvents();
 
@@ -104,22 +130,28 @@ class OutboxRelaySchedulerTest {
 
     @Test
     void failedEventDoesNotPreventLaterEventsFromBeingPublished() {
-        OutboxEvent badEvent = pendingEvent(4L, 0);
-        OutboxEvent goodEvent = pendingEvent(5L, 0);
+        mockTransactionTemplate();
+        OutboxEvent badEvent = pendingEvent(UUID.randomUUID(), 0);
+        OutboxEvent goodEvent = pendingEvent(UUID.randomUUID(), 0);
         when(outboxEventRepository.findTop100ByStatusOrderByCreatedAtAsc(
                 OutboxStatus.PENDING))
                 .thenReturn(List.of(badEvent, goodEvent));
+        when(outboxEventRepository.findById(badEvent.getId())).thenReturn(Optional.of(badEvent));
+        when(outboxEventRepository.findById(goodEvent.getId())).thenReturn(Optional.of(goodEvent));
+
         doAnswer(invocation -> {
             if (invocation.getArgument(0) == badEvent) {
                 throw new IllegalStateException("Poisoned event");
             }
             return null;
         }).when(messagePublisher).publish(any(OutboxEvent.class));
+
         OutboxRelayScheduler scheduler =
                 new OutboxRelayScheduler(
                         outboxEventRepository,
                         messagePublisher,
-                        telemetryManager);
+                        telemetryManager,
+                        transactionTemplate);
 
         scheduler.processPendingOutboxEvents();
 
@@ -127,11 +159,11 @@ class OutboxRelaySchedulerTest {
         verify(messagePublisher).publish(goodEvent);
         assertEquals(OutboxStatus.PENDING, badEvent.getStatus());
         assertEquals(1, badEvent.getRetryCount());
-        assertEquals(OutboxStatus.SENT, goodEvent.getStatus());
+        assertEquals(OutboxStatus.PUBLISHED, goodEvent.getStatus());
         verify(telemetryManager).incrementOutboxRelayErrors();
     }
 
-    private static OutboxEvent pendingEvent(Long id, int retryCount) {
+    private static OutboxEvent pendingEvent(UUID id, int retryCount) {
         return OutboxEvent.builder()
                 .id(id)
                 .aggregateType("SPEAKING_SESSION")

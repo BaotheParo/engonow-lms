@@ -1,5 +1,6 @@
 package com.engonow.lms.service.impl;
 
+import com.engonow.lms.dto.AudioReferenceDTO;
 import com.engonow.lms.dto.OmrAnswer;
 import com.engonow.lms.dto.SpeakingEvaluationEventPayload;
 import com.engonow.lms.dto.SpeakingSubmissionRequestDTO;
@@ -24,9 +25,15 @@ import com.engonow.lms.repository.SpeakingSessionResultRepository;
 import com.engonow.lms.repository.TestSubmissionRepository;
 import com.engonow.lms.repository.UserRepository;
 import com.engonow.lms.service.SubmissionService;
+import com.engonow.lms.speaking.event.SpeakingEvaluationRequestedPayload;
+import com.engonow.lms.writing.event.EventEnvelope;
+import com.engonow.lms.writing.event.OutboxEventCreatedLocalEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
@@ -40,15 +47,27 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class SubmissionServiceImpl implements SubmissionService {
+
+    public static final String SPEAKING_EVALUATION_REQUESTED_TOPIC = "engonow.speaking.evaluation-requested.v1";
+    public static final String AGGREGATE_TYPE_SPEAKING_ATTEMPT = "SPEAKING_ATTEMPT";
+    public static final String EVENT_TYPE_SPEAKING_EVALUATION_REQUESTED = "SPEAKING_EVALUATION_REQUESTED";
+
+    private static final Set<String> ALLOWED_AUDIO_TYPES = Set.of(
+        "audio/mpeg", "audio/mp3", "audio/wav", "audio/m4a", "audio/webm", "audio/mp4", "audio/ogg", "audio/x-wav"
+    );
 
     private final ExamRepository examRepository;
     private final TestSubmissionRepository testSubmissionRepository;
@@ -60,6 +79,7 @@ public class SubmissionServiceImpl implements SubmissionService {
     private final SpeakingSessionResultRepository speakingSessionResultRepository;
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
+    private ApplicationEventPublisher applicationEventPublisher;
 
     public SubmissionServiceImpl(
             ExamRepository examRepository,
@@ -82,6 +102,11 @@ public class SubmissionServiceImpl implements SubmissionService {
         this.speakingSessionResultRepository = speakingSessionResultRepository;
         this.outboxEventRepository = outboxEventRepository;
         this.objectMapper = objectMapper;
+    }
+
+    @Autowired(required = false)
+    public void setApplicationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     @Override
@@ -188,6 +213,102 @@ public class SubmissionServiceImpl implements SubmissionService {
     @Transactional
     public SpeakingSubmissionResponseDTO submitSpeakingEvaluation(
             SpeakingSubmissionRequestDTO request) {
+
+        // Modern Claim-Check path
+        if (request.audioRef() != null) {
+            return processClaimCheckSpeakingSubmission(request);
+        }
+
+        // Legacy booking session path
+        return processLegacyBookingSpeakingSubmission(request);
+    }
+
+    private SpeakingSubmissionResponseDTO processClaimCheckSpeakingSubmission(SpeakingSubmissionRequestDTO request) {
+        AudioReferenceDTO audioRef = request.audioRef();
+        if (audioRef.objectKey() == null || audioRef.objectKey().isBlank()) {
+            throw new IllegalArgumentException("Audio reference objectKey must not be blank");
+        }
+        if (audioRef.contentType() == null || !ALLOWED_AUDIO_TYPES.contains(audioRef.contentType().toLowerCase())) {
+            throw new IllegalArgumentException("Unsupported audio content type: " + audioRef.contentType());
+        }
+
+        UUID attemptId = request.sessionId() != null && isValidUUID(request.sessionId())
+            ? UUID.fromString(request.sessionId())
+            : UUID.randomUUID();
+        UUID studentId = request.studentId() != null ? request.studentId() : UUID.randomUUID();
+        String part = request.part() != null ? request.part() : "PART_1";
+
+        SpeakingEvaluationRequestedPayload payload = new SpeakingEvaluationRequestedPayload(
+            attemptId,
+            studentId,
+            part,
+            audioRef
+        );
+
+        String traceId = UUID.randomUUID().toString();
+        EventEnvelope<SpeakingEvaluationRequestedPayload> envelope = EventEnvelope.of(
+            EVENT_TYPE_SPEAKING_EVALUATION_REQUESTED,
+            attemptId,
+            attemptId.toString(),
+            traceId,
+            "engonow-lms-backend",
+            payload
+        );
+
+        String serializedEnvelope;
+        try {
+            serializedEnvelope = objectMapper.writeValueAsString(envelope);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize speaking evaluation event envelope", e);
+        }
+
+        // Persist pending speaking result
+        SpeakingSessionResult pendingResult = SpeakingSessionResult.builder()
+            .sessionId(attemptId.toString())
+            .evaluationStatus(SpeakingEvaluationStatus.PENDING)
+            .isComplete(false)
+            .build();
+        speakingSessionResultRepository.save(pendingResult);
+
+        // Persist Transactional Outbox event
+        OutboxEvent outboxEvent = OutboxEvent.builder()
+            .aggregateType(AGGREGATE_TYPE_SPEAKING_ATTEMPT)
+            .aggregateId(attemptId.toString())
+            .eventType(EVENT_TYPE_SPEAKING_EVALUATION_REQUESTED)
+            .schemaVersion("1.0")
+            .traceId(traceId)
+            .correlationId(attemptId.toString())
+            .payload(serializedEnvelope)
+            .status(OutboxStatus.PENDING)
+            .retryCount(0)
+            .build();
+        OutboxEvent savedOutbox = outboxEventRepository.save(outboxEvent);
+
+        if (applicationEventPublisher != null) {
+            applicationEventPublisher.publishEvent(new OutboxEventCreatedLocalEvent(
+                savedOutbox.getId(),
+                SPEAKING_EVALUATION_REQUESTED_TOPIC,
+                attemptId.toString(),
+                serializedEnvelope,
+                Map.of(
+                    "eventId", envelope.eventId().toString().getBytes(StandardCharsets.UTF_8),
+                    "traceId", traceId.getBytes(StandardCharsets.UTF_8),
+                    "correlationId", attemptId.toString().getBytes(StandardCharsets.UTF_8)
+                )
+            ));
+        }
+
+        log.info("[SPEAKING SUBMISSION] Accepted claim-check speaking attempt: {} for student: {}",
+            attemptId, studentId);
+
+        return new SpeakingSubmissionResponseDTO(
+            attemptId.toString(),
+            SpeakingEvaluationStatus.PENDING,
+            "Speaking evaluation accepted for asynchronous processing"
+        );
+    }
+
+    private SpeakingSubmissionResponseDTO processLegacyBookingSpeakingSubmission(SpeakingSubmissionRequestDTO request) {
         Long bookingId = parseBookingId(request.sessionId());
 
         MockTestBooking booking = mockTestBookingRepository.findById(bookingId)
@@ -245,6 +366,15 @@ public class SubmissionServiceImpl implements SubmissionService {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(
                     "Session ID must be a valid numeric booking ID: " + sessionId, e);
+        }
+    }
+
+    private boolean isValidUUID(String str) {
+        try {
+            UUID.fromString(str);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 }

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engonow.com/schemas/speaking_evaluation_requested.json",
+  "title": "SpeakingEvaluationRequestedPayload",
+  "description": "Payload emitted when an IELTS Speaking recording is uploaded. Uses the Claim-Check pattern (references remote audio storage; never transmits inline raw audio bytes).",
+  "type": "object",
+  "required": [
+    "attemptId",
+    "studentId",
+    "part",
+    "audioRef"
+  ],
+  "properties": {
+    "attemptId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this speaking assessment attempt."
+    },
+    "studentId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the student."
+    },
+    "part": {
+      "type": "string",
+      "enum": [
+        "PART_1",
+        "PART_2",
+        "PART_3"
+      ],
+      "description": "IELTS Speaking test part."
+    },
+    "audioRef": {
+      "type": "object",
+      "description": "Claim-Check remote audio pointer.",
+      "required": [
+        "storageProvider",
+        "bucket",
+        "objectKey",
+        "checksumSha256",
+        "contentType",
+        "durationSeconds"
+      ],
+      "properties": {
+        "storageProvider": {
+          "type": "string",
+          "enum": [
+            "S3",
+            "GCS",
+            "AZURE_BLOB",
+            "MINIO",
+            "LOCAL_BLOB"
+          ],
+          "description": "Cloud object storage service hosting the audio file."
+        },
+        "bucket": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Storage bucket or container name."
+        },
+        "objectKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact key/path to the audio file within the bucket."
+        },
+        "checksumSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "SHA-256 hash of the audio file to verify binary integrity."
+        },
+        "contentType": {
+          "type": "string",
+          "description": "MIME type of the audio recording (e.g. audio/wav, audio/webm, audio/mpeg)."
+        },
+        "durationSeconds": {
+          "type": "number",
+          "minimum": 0.1,
+          "description": "Measured audio duration in seconds."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

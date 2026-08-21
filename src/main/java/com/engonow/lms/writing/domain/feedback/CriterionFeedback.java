@@ -29,6 +29,7 @@ public record CriterionFeedback(
         weaknesses = immutableCopy(weaknesses);
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @AssertTrue(message = "score must use a whole-band or half-band increment")
     public boolean isScoreIncrementValid() {
         return score == null || score.remainder(HALF_BAND).compareTo(BigDecimal.ZERO) == 0;

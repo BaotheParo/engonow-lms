@@ -34,4 +34,20 @@ public interface WritingSubmissionService {
      * @param payload the webhook payload sent by Python AI worker
      */
     void processEvaluationWebhook(WritingWebhookPayloadDTO payload);
+
+    /**
+     * Processes a WRITING_EVALUATION_COMPLETED Kafka event envelope with Inbox deduplication.
+     */
+    void processEvaluationCompletedEvent(
+        com.engonow.lms.writing.event.EventEnvelope<com.engonow.lms.writing.event.WritingEvaluationCompletedPayload> envelope,
+        String rawPayload
+    );
+
+    /**
+     * Processes a WRITING_EVALUATION_FAILED Kafka event envelope with Inbox deduplication.
+     */
+    void processEvaluationFailedEvent(
+        com.engonow.lms.writing.event.EventEnvelope<com.engonow.lms.writing.event.WritingEvaluationFailedPayload> envelope,
+        String rawPayload
+    );
 }

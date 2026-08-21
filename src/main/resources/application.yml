@@ -2,9 +2,22 @@ spring:
   application:
     name: engonow-lms-backend
 
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    time-zone: UTC
+
   kafka:
     listener:
       ack-mode: manual_immediate
+    producer:
+      acks: all
+      retries: 3
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
 
   # Centralized distributed state (Lettuce connection pool)
   data:
@@ -22,16 +35,10 @@ spring:
 
   # ─── DataSource (HikariCP) ────────────────────────────────────────────────
   datasource:
-    url: >
-      jdbc:mysql://localhost:3306/engonow_lms
-      ?useSSL=false
-      &serverTimezone=UTC
-      &allowPublicKeyRetrieval=true
-      &characterEncoding=UTF-8
-      &rewriteBatchedStatements=true
-    username: root
-    password: ${DB_PASSWORD:engonow_root_2024}
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/engonow_lms}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
     hikari:
       pool-name: EngonowHikariPool
       maximum-pool-size: 20
@@ -41,14 +48,20 @@ spring:
       max-lifetime: 1800000      # 30 min
       leak-detection-threshold: 60000
 
+  # ─── Flyway Migration ──────────────────────────────────────────────────────
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
   # ─── JPA / Hibernate ─────────────────────────────────────────────────────
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: true
     open-in-view: false   # Prevent lazy-loading anti-pattern via HTTP threads
     properties:
       hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
         default_batch_fetch_size: 20
         jdbc:

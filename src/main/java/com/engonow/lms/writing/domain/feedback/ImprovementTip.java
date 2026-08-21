@@ -19,6 +19,7 @@ public record ImprovementTip(
 
     private static final BigDecimal HALF_BAND = new BigDecimal("0.5");
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @AssertTrue(message = "targetBand must use a whole-band or half-band increment")
     public boolean isTargetBandIncrementValid() {
         return targetBand == null

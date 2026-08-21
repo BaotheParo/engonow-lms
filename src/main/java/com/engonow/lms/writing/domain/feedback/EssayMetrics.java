@@ -18,6 +18,7 @@ public record EssayMetrics(
 ) {
 
     /** A vocabulary cannot contain more distinct words than total words. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @AssertTrue(message = "uniqueWords must not exceed totalWords")
     public boolean isUniqueWordCountValid() {
         return totalWords == null || uniqueWords == null || uniqueWords <= totalWords;

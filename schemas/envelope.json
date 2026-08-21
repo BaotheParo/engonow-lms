@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engonow.com/schemas/envelope.json",
+  "title": "EngonowEventEnvelope",
+  "description": "Standardized event envelope wrapping all Kafka messages within the ENGONOW event-driven architecture.",
+  "type": "object",
+  "required": [
+    "eventId",
+    "idempotencyKey",
+    "eventType",
+    "schemaVersion",
+    "occurredAt",
+    "producedAt",
+    "traceId",
+    "correlationId",
+    "source",
+    "retryCount",
+    "payload"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this specific event instance."
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Idempotency key uniquely identifying the business operation to prevent duplicate processing."
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "WRITING_EVALUATION_REQUESTED",
+        "WRITING_EVALUATION_COMPLETED",
+        "WRITING_EVALUATION_FAILED",
+        "SPEAKING_EVALUATION_REQUESTED",
+        "SPEAKING_EVALUATION_COMPLETED",
+        "SPEAKING_EVALUATION_FAILED"
+      ],
+      "description": "Canonical event type identifier."
+    },
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "default": "1.0",
+      "description": "Semantic major.minor schema version."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the business action occurred (ISO-8601 UTC)."
+    },
+    "producedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when this event was serialized and emitted to Kafka (ISO-8601 UTC)."
+    },
+    "traceId": {
+      "type": "string",
+      "description": "W3C traceparent or distributed tracing context ID."
+    },
+    "correlationId": {
+      "type": "string",
+      "description": "Business correlation identifier linking all events across an asynchronous evaluation lifecycle."
+    },
+    "source": {
+      "type": "string",
+      "description": "Originating microservice or worker (e.g., engonow-lms-backend, ai-writing-worker)."
+    },
+    "retryCount": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Number of retry attempts executed for this message."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Domain-specific event payload matching the eventType schema."
+    }
+  },
+  "additionalProperties": false
+}

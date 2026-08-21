@@ -38,8 +38,33 @@ public class KafkaMessagePublisher implements MessagePublisher {
         }
 
         try {
+            org.apache.kafka.clients.producer.ProducerRecord<String, String> producerRecord = 
+                new org.apache.kafka.clients.producer.ProducerRecord<>(
+                    topic,
+                    event.getAggregateId(),
+                    event.getPayload()
+                );
+
+            if (event.getId() != null) {
+                producerRecord.headers().add("eventId", event.getId().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            if (event.getTraceId() != null) {
+                producerRecord.headers().add("traceId", event.getTraceId().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            if (event.getCorrelationId() != null) {
+                producerRecord.headers().add("correlationId", event.getCorrelationId().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            if (event.getEventType() != null) {
+                producerRecord.headers().add("eventType", event.getEventType().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            if (event.getSchemaVersion() != null) {
+                producerRecord.headers().add("schemaVersion", event.getSchemaVersion().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            producerRecord.headers().add("retryCount", String.valueOf(event.getRetryCount()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            producerRecord.headers().add("source", "engonow-lms-backend".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
             kafkaTemplate
-                    .send(topic, event.getAggregateId(), event.getPayload())
+                    .send(producerRecord)
                     .get(PUBLISH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             log.info(
                     "[KAFKA BROKER] Published outbox event id={} aggregateId={} topic={}",

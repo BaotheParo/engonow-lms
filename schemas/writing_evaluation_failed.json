@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engonow.com/schemas/writing_evaluation_failed.json",
+  "title": "WritingEvaluationFailedPayload",
+  "description": "Payload emitted when an IELTS Writing evaluation job encounters a terminal or unrecoverable error.",
+  "type": "object",
+  "required": [
+    "submissionId",
+    "errorCode",
+    "errorMessage",
+    "isRetriable",
+    "failedAt"
+  ],
+  "properties": {
+    "submissionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the failed writing submission."
+    },
+    "errorCode": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical machine-readable error code (e.g. GEMINI_RESOURCE_EXHAUSTED, SCHEMA_VALIDATION_FAILURE, TIMEOUT)."
+    },
+    "errorMessage": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Detailed human-readable error diagnostic message."
+    },
+    "isRetriable": {
+      "type": "boolean",
+      "description": "Indicates whether the message can be safely re-queued to the retry topic."
+    },
+    "failedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the failure was recorded (ISO-8601 UTC)."
+    }
+  },
+  "additionalProperties": false
+}

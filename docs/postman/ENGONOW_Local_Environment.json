@@ -1,0 +1,21 @@
+{
+	"id": "e9876543-21ba-4321-9876-543210fedcba",
+	"name": "ENGONOW Local Environment",
+	"values": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8080",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "currentSubmissionId",
+			"value": "",
+			"type": "any",
+			"enabled": true
+		}
+	],
+	"_postman_variable_scope": "environment",
+	"_postman_exported_at": "2026-08-17T17:25:00.000Z",
+	"_postman_exported_using": "Postman/10.0.0"
+}

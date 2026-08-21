@@ -421,44 +421,84 @@ Schema (matching WritingFeedbackDetail — PROPOSED, pending your actual DTO):
   }
 }
 
-Filled example (abbreviated — illustrates shape, not a full essay run):
+Filled example (abbreviated — illustrates exact WritingFeedbackDetail shape):
 
 {
-  "taskType": "TASK_2",
-  "scopeWarning": null,
-  "wordCount": 288,
-  "profileFlag": false,
-  "scores": {
-    "taskResponse": { "band": 6.0, "justification": "All parts of the task addressed with a clear position; development is adequate but somewhat mechanical.", "strengths": ["Clear opposing-views-then-position structure"], "weaknesses": ["Employer/employee confusion reverses one argument's meaning"] },
-    "coherenceCohesion": { "band": 6.0, "justification": "Clear macro-organization; cohesion undermined by repetitive connector use.", "strengths": ["Logical opposing-views to conclusion arc"], "weaknesses": ["'As a result' repeated without variation"] },
-    "lexicalResource": { "band": 6.0, "justification": "Adequate range; several word-form/countability control issues.", "strengths": ["Appropriate topic vocabulary attempted"], "weaknesses": ["communicate/communication confusion", "employer/employee confusion"] },
-    "grammaticalRangeAccuracy": { "band": 6.0, "justification": "Mix of simple/complex sentences; frequent local errors that remain recoverable.", "strengths": ["Attempts complex clauses"], "weaknesses": ["SVA lapse", "modal redundancy"] }
+  "examinerSummary": "A well-structured argumentative essay reaching Band 6.0 with clear central stance.",
+  "essayMetrics": {
+    "totalWords": 288,
+    "uniqueWords": 142,
+    "lexicalDiversityRatio": 0.493,
+    "averageSentenceLength": 18.0,
+    "complexSentencesRatio": 0.60
   },
-  "overallBand": 6.0,
-  "overallJustification": "Mean of 6.0/6.0/6.0/6.0 = 6.0; no rounding adjustment needed.",
-  "corrections": [
+  "criteria": [
     {
-      "id": "C1",
-      "originalQuote": "working from home bring more benefits",
-      "startOffset": 142,
-      "endOffset": 180,
-      "offsetConfidence": "HIGH",
-      "correctedText": "working from home brings more benefits",
-      "errorLabels": ["GRAMMAR", "SVA"],
-      "criterion": ["GRA"],
-      "severity": "HIGH",
-      "coreError": "Subject-verb agreement: gerund-phrase subject is singular.",
-      "teacherRationaleVi": "'Working from home' là chủ ngữ số ít nên dùng 'brings' thay vì 'bring'.",
-      "correctionType": "SUBJECT_VERB_AGREEMENT"
+      "criterion": "TASK_RESPONSE",
+      "score": 6.0,
+      "summary": "All parts of the task addressed with a clear position; development is adequate but somewhat mechanical.",
+      "strengths": ["Clear opposing-views-then-position structure"],
+      "weaknesses": ["Employer/employee confusion reverses one argument's meaning"],
+      "bandGapAnalysis": "Extend supporting examples and avoid factual reversals to reach Band 7.0."
+    },
+    {
+      "criterion": "COHERENCE_COHESION",
+      "score": 6.0,
+      "summary": "Clear macro-organization; cohesion undermined by repetitive connector use.",
+      "strengths": ["Logical opposing-views to conclusion arc"],
+      "weaknesses": ["'As a result' repeated without variation"],
+      "bandGapAnalysis": "Vary cohesive devices and use referential pronouns to reach Band 7.0."
+    },
+    {
+      "criterion": "LEXICAL_RESOURCE",
+      "score": 6.0,
+      "summary": "Adequate range; several word-form/countability control issues.",
+      "strengths": ["Appropriate topic vocabulary attempted"],
+      "weaknesses": ["communicate/communication confusion", "employer/employee confusion"],
+      "bandGapAnalysis": "Use natural collocations and correct register to reach Band 7.0."
+    },
+    {
+      "criterion": "GRAMMATICAL_RANGE_ACCURACY",
+      "score": 6.0,
+      "summary": "Mix of simple/complex sentences; frequent local errors that remain recoverable.",
+      "strengths": ["Attempts complex clauses"],
+      "weaknesses": ["SVA lapse", "modal redundancy"],
+      "bandGapAnalysis": "Eliminate basic agreement slips and produce error-free complex sentences for Band 7.0."
     }
   ],
-  "priorityFixList": [
-    { "rank": 1, "issueVi": "Nhầm lẫn employer/employee", "whyItMattersVi": "Làm đảo ngược ý nghĩa luận điểm, ảnh hưởng cả LR và TR.", "quickFixVi": "Đọc lại câu và xác định rõ ai là chủ thể hưởng lợi trước khi viết." },
-    { "rank": 2, "issueVi": "Lặp lại 'As a result' nhiều lần", "whyItMattersVi": "Tạo cảm giác cohesion máy móc, giới hạn CC ở mức trần Band 6.", "quickFixVi": "Thay bằng 'Consequently', 'This means that', hoặc nối câu theo cách khác." },
-    { "rank": 3, "issueVi": "Lỗi hòa hợp chủ-vị lặp lại", "whyItMattersVi": "Là lỗi nền tảng thường gặp, cản trở việc vượt Band 6.", "quickFixVi": "Kiểm tra lại động từ mỗi khi chủ ngữ là danh động từ (V-ing) hoặc cụm danh từ số ít." }
+  "corrections": [
+    {
+      "startIndex": 142,
+      "endIndex": 180,
+      "originalSentence": "working from home bring more benefits",
+      "correctedSentence": "working from home brings more benefits",
+      "errorType": "GRAMMAR",
+      "severity": "MAJOR",
+      "explanation": "'Working from home' là chủ ngữ số ít nên dùng 'brings' thay vì 'bring'.",
+      "enhancedOptions": {
+        "band7Option": "telecommuting yields considerable advantages for modern employees",
+        "band8Option": "remote working models offer distinct operational and personal benefits"
+      }
+    }
   ],
-  "modelUpgrades": [
-    { "original": "spend effective time for their work and their own", "upgraded": "spend their time effectively on both their work and their personal life", "noteVi": "Collocation tự nhiên hơn, vẫn giữ nguyên ý gốc." }
+  "cohesiveDeviceAnalysis": {
+    "usedDevices": ["In conclusion", "On the other hand", "Furthermore", "As a result"],
+    "overusedOrRepetitive": ["As a result"],
+    "suggestedTransitions": ["Consequently", "Therefore", "Moreover"]
+  },
+  "vocabularyUpgrades": [
+    {
+      "originalWord": "spend effective time",
+      "contextInEssay": "spend effective time for their work",
+      "academicAlternatives": ["allocate time efficiently", "utilize time productively"],
+      "recommendedCollocations": ["spend time effectively", "strike a healthy work-life balance"]
+    }
   ],
-  "nextEssayGoal": "Trước khi nộp bài, đọc lại một lượt chỉ để kiểm tra các cặp danh từ dễ nhầm (employer/employee, feedback/feedbacks) — đây là lỗi có trọng số cao nhất trong bài này."
+  "improvementTips": [
+    {
+      "category": "LEXICAL_RESOURCE",
+      "tipText": "Đọc lại bài để kiểm tra các cặp từ dễ nhầm lẫn như employer/employee.",
+      "targetBand": 7.0
+    }
+  ]
 }

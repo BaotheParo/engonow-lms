@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engonow.com/schemas/speaking_evaluation_completed.json",
+  "title": "SpeakingEvaluationCompletedPayload",
+  "description": "Payload emitted when an IELTS Speaking assessment has been processed and scored by the multi-modal acoustic AI engine.",
+  "type": "object",
+  "required": [
+    "attemptId",
+    "fluencyCoherenceScore",
+    "lexicalResourceScore",
+    "grammaticalRangeScore",
+    "pronunciationScore",
+    "overallBand",
+    "feedbackDetail"
+  ],
+  "properties": {
+    "attemptId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the speaking attempt."
+    },
+    "fluencyCoherenceScore": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Fluency and Coherence criterion score in 0.5 increments."
+    },
+    "lexicalResourceScore": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Lexical Resource criterion score in 0.5 increments."
+    },
+    "grammaticalRangeScore": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Grammatical Range and Accuracy criterion score in 0.5 increments."
+    },
+    "pronunciationScore": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Pronunciation criterion score in 0.5 increments."
+    },
+    "overallBand": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Official Cambridge-rounded overall speaking band score in 0.5 increments."
+    },
+    "feedbackDetail": {
+      "type": "object",
+      "required": [
+        "transcript",
+        "speechMetrics",
+        "phoneticDiagnostics",
+        "criteria",
+        "improvementTips"
+      ],
+      "properties": {
+        "transcript": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Verbatim speech-to-text transcript of the student's recording."
+        },
+        "speechMetrics": {
+          "type": "object",
+          "required": [
+            "wpm",
+            "pauseCount",
+            "speechDurationSeconds",
+            "fillerWordsCount",
+            "repetitionCount"
+          ],
+          "properties": {
+            "wpm": { "type": "number", "minimum": 0.0 },
+            "pauseCount": { "type": "integer", "minimum": 0 },
+            "speechDurationSeconds": { "type": "number", "minimum": 0.0 },
+            "fillerWordsCount": { "type": "integer", "minimum": 0 },
+            "repetitionCount": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "phoneticDiagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "word",
+              "expectedIpa",
+              "actualIpa",
+              "timestampMs",
+              "confidenceScore"
+            ],
+            "properties": {
+              "word": { "type": "string" },
+              "expectedIpa": { "type": "string" },
+              "actualIpa": { "type": "string" },
+              "timestampMs": { "type": "integer", "minimum": 0 },
+              "confidenceScore": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 4,
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion",
+              "score",
+              "summary",
+              "strengths",
+              "weaknesses"
+            ],
+            "properties": {
+              "criterion": {
+                "type": "string",
+                "enum": [
+                  "FLUENCY_COHERENCE",
+                  "LEXICAL_RESOURCE",
+                  "GRAMMATICAL_RANGE_ACCURACY",
+                  "PRONUNCIATION"
+                ]
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 9.0,
+                "multipleOf": 0.5
+              },
+              "summary": { "type": "string" },
+              "strengths": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "weaknesses": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "improvementTips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["category", "tipText", "targetBand"],
+            "properties": {
+              "category": { "type": "string" },
+              "tipText": { "type": "string" },
+              "targetBand": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 9.0,
+                "multipleOf": 0.5
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -38,8 +38,8 @@ public class SpeakingSessionResult extends BaseEntity {
     /**
      * Owning side of @OneToOne — holds FK column booking_id.
      */
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "booking_id", nullable = false,
+    @OneToOne(fetch = FetchType.LAZY, optional = true)
+    @JoinColumn(name = "booking_id", nullable = true,
                 foreignKey = @ForeignKey(name = "fk_result_booking"))
     private MockTestBooking booking;
 

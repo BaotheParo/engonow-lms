@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engonow.com/schemas/writing_evaluation_completed.json",
+  "title": "WritingEvaluationCompletedPayload",
+  "description": "Payload emitted when an IELTS Writing essay has been evaluated successfully by the AI engine.",
+  "type": "object",
+  "required": [
+    "submissionId",
+    "taskAchievementScore",
+    "coherenceCohesionScore",
+    "lexicalResourceScore",
+    "grammaticalRangeScore",
+    "overallBand",
+    "feedbackDetail"
+  ],
+  "properties": {
+    "submissionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the evaluated writing submission."
+    },
+    "taskAchievementScore": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Task Achievement (Task 1) or Task Response (Task 2) criterion score in 0.5 increments."
+    },
+    "coherenceCohesionScore": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Coherence and Cohesion criterion score in 0.5 increments."
+    },
+    "lexicalResourceScore": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Lexical Resource criterion score in 0.5 increments."
+    },
+    "grammaticalRangeScore": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Grammatical Range and Accuracy criterion score in 0.5 increments."
+    },
+    "overallBand": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 9.0,
+      "multipleOf": 0.5,
+      "description": "Official Cambridge-rounded overall band score in 0.5 increments."
+    },
+    "feedbackDetail": {
+      "type": "object",
+      "required": [
+        "examinerSummary",
+        "essayMetrics",
+        "criteria",
+        "corrections",
+        "cohesiveDeviceAnalysis",
+        "vocabularyUpgrades",
+        "improvementTips"
+      ],
+      "properties": {
+        "examinerSummary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "High-level examiner commentary and diagnostic summary."
+        },
+        "essayMetrics": {
+          "type": "object",
+          "required": [
+            "totalWords",
+            "uniqueWords",
+            "lexicalDiversityRatio",
+            "averageSentenceLength",
+            "complexSentencesRatio"
+          ],
+          "properties": {
+            "totalWords": { "type": "integer", "minimum": 0 },
+            "uniqueWords": { "type": "integer", "minimum": 0 },
+            "lexicalDiversityRatio": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "averageSentenceLength": { "type": "number", "minimum": 0.0 },
+            "complexSentencesRatio": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+          },
+          "additionalProperties": false
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 4,
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion",
+              "score",
+              "summary",
+              "strengths",
+              "weaknesses"
+            ],
+            "properties": {
+              "criterion": {
+                "type": "string",
+                "enum": [
+                  "TASK_ACHIEVEMENT",
+                  "TASK_RESPONSE",
+                  "COHERENCE_COHESION",
+                  "LEXICAL_RESOURCE",
+                  "GRAMMATICAL_RANGE_ACCURACY"
+                ]
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 9.0,
+                "multipleOf": 0.5
+              },
+              "summary": { "type": "string" },
+              "strengths": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "weaknesses": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "bandGapAnalysis": {
+                "type": ["string", "null"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "corrections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "startIndex",
+              "endIndex",
+              "originalSentence",
+              "correctedSentence",
+              "errorType",
+              "severity",
+              "explanation"
+            ],
+            "properties": {
+              "startIndex": { "type": "integer", "minimum": 0 },
+              "endIndex": { "type": "integer", "minimum": 0 },
+              "originalSentence": { "type": "string" },
+              "correctedSentence": { "type": "string" },
+              "errorType": {
+                "type": "string",
+                "enum": [
+                  "GRAMMAR",
+                  "VOCABULARY",
+                  "SPELLING",
+                  "PUNCTUATION",
+                  "COHESION",
+                  "TASK_RELEVANCE"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "enum": ["MINOR", "MAJOR", "CRITICAL"]
+              },
+              "explanation": { "type": "string" },
+              "enhancedOptions": {
+                "type": ["object", "null"],
+                "required": ["band7Option", "band8Option"],
+                "properties": {
+                  "band7Option": { "type": "string" },
+                  "band8Option": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "cohesiveDeviceAnalysis": {
+          "type": "object",
+          "required": [
+            "usedDevices",
+            "overusedOrRepetitive",
+            "suggestedTransitions"
+          ],
+          "properties": {
+            "usedDevices": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "overusedOrRepetitive": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "suggestedTransitions": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "vocabularyUpgrades": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "originalWord",
+              "contextInEssay",
+              "academicAlternatives",
+              "recommendedCollocations"
+            ],
+            "properties": {
+              "originalWord": { "type": "string" },
+              "contextInEssay": { "type": "string" },
+              "academicAlternatives": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "recommendedCollocations": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "improvementTips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["category", "tipText", "targetBand"],
+            "properties": {
+              "category": { "type": "string" },
+              "tipText": { "type": "string" },
+              "targetBand": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 9.0,
+                "multipleOf": 0.5
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

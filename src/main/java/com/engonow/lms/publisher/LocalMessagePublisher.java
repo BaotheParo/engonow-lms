@@ -41,7 +41,7 @@ public class LocalMessagePublisher implements MessagePublisher {
     }
 
     public record LocalOutboxMessage(
-        Long eventId,
+        java.util.UUID eventId,
         String aggregateType,
         String aggregateId,
         String eventType,

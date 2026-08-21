@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engonow.com/schemas/writing_evaluation_requested.json",
+  "title": "WritingEvaluationRequestedPayload",
+  "description": "Payload emitted when a student submits an IELTS essay for AI evaluation.",
+  "type": "object",
+  "required": [
+    "submissionId",
+    "studentId",
+    "taskType",
+    "taskPrompt",
+    "essayText",
+    "wordCount"
+  ],
+  "properties": {
+    "submissionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the writing submission."
+    },
+    "studentId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the student."
+    },
+    "taskType": {
+      "type": "string",
+      "enum": [
+        "ACADEMIC_TASK1",
+        "GENERAL_TASK1",
+        "TASK2",
+        "FULL_TEST"
+      ],
+      "description": "Supported IELTS Writing assessment task type."
+    },
+    "taskPrompt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Original IELTS prompt / essay topic question."
+    },
+    "essayText": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Student submitted essay text."
+    },
+    "wordCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total word count computed at submission time."
+    }
+  },
+  "additionalProperties": false
+}

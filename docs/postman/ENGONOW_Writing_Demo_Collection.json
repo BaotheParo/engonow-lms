@@ -1,0 +1,129 @@
+{
+	"info": {
+		"_postman_id": "a1b2c3d4-e5f6-47a8-99b0-c1d2e3f4a5b6",
+		"name": "ENGONOW Writing Subsystem Demo",
+		"description": "Postman Collection for 5-minute Technical Demo of ENGONOW IELTS AI Writing Subsystem",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "01. Submit Essay (Student Submission)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"if (pm.response.code === 202) {",
+							"    var jsonData = pm.response.json();",
+							"    pm.environment.set(\"currentSubmissionId\", jsonData.id);",
+							"    console.log(\"Saved submissionId to environment: \" + jsonData.id);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"studentId\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\",\n  \"taskType\": \"TASK2\",\n  \"taskPrompt\": \"Some people believe that mobile phones have improved social communication, while others argue that they harm face-to-face interactions. Discuss both views and give your opinion.\",\n  \"essayText\": \"Nowadays, mobile phones have become an essential part of daily life. Some people think these devices improve communication between people, while others believe they have negative effects on face-to-face interactions.\\n\\nOn the one hand, mobile phones make communication much easier and faster. People can talk with their friends and family members who live far away instantly through text messages or video calls. Moreover, social media platforms allow individuals to connect with wider groups and share their everyday experiences effortlessly.\\n\\nOn the other hand, heavy reliance on mobile phones can damage real-life relationships. When people spend too much time staring at screens during meals or social gatherings, they ignore the people sitting right next to them. Furthermore, virtual messages lack emotional tone, which often causes misunderstandings among users.\\n\\nIn my opinion, although mobile phones offer convenient connection options, they should be used in moderation to maintain high quality personal communication.\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/writing/submissions/submit",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"writing",
+						"submissions",
+						"submit"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "02. Simulate AI Webhook Callback (Auto-Grading Callback)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"submissionId\": \"{{currentSubmissionId}}\",\n  \"taskAchievementScore\": 6.0,\n  \"coherenceCohesionScore\": 5.0,\n  \"lexicalResourceScore\": 6.0,\n  \"grammaticalRangeScore\": 5.0,\n  \"aiModelVersion\": \"gemini-2.5-flash\",\n  \"status\": \"SUCCESS\",\n  \"errorMessage\": null,\n  \"feedbackDetail\": {\n    \"examinerSummary\": \"The essay addresses both sides of the prompt with a clear position. However, paragraph transitions are repetitive and grammatical range shows persistent minor errors in complex clause structures.\",\n    \"essayMetrics\": {\n      \"totalWords\": 168,\n      \"uniqueWords\": 98,\n      \"lexicalDiversityRatio\": 0.58,\n      \"averageSentenceLength\": 18.6,\n      \"complexSentencesRatio\": 0.33\n    },\n    \"criteria\": [\n      {\n        \"criterion\": \"TASK_RESPONSE\",\n        \"score\": 6.0,\n        \"summary\": \"Presents a relevant position throughout the response. Main ideas are extended, but some supporting points lack depth.\",\n        \"strengths\": [\n          \"Clear stance in introduction and conclusion\",\n          \"Both views are addressed explicitly\"\n        ],\n        \"weaknesses\": [\n          \"Arguments in body paragraph 2 could be developed with more specific examples\"\n        ],\n        \"bandGapAnalysis\": \"To reach Band 7.0, elaborate further on how virtual messages cause specific emotional misunderstandings.\"\n      },\n      {\n        \"criterion\": \"COHERENCE_COHESION\",\n        \"score\": 5.0,\n        \"summary\": \"Organizes information with clear paragraphing, but cohesive devices like 'On the one hand' and 'Furthermore' are used repetitively.\",\n        \"strengths\": [\n          \"Logical overall structure with distinct body paragraphs\"\n        ],\n        \"weaknesses\": [\n          \"Overuse of basic linking expressions at sentence starts\"\n        ],\n        \"bandGapAnalysis\": \"Vary transition markers and employ referential pronoun cohesion instead of formulaic paragraph starters.\"\n      },\n      {\n        \"criterion\": \"LEXICAL_RESOURCE\",\n        \"score\": 6.0,\n        \"summary\": \"Uses an adequate range of vocabulary for the task with some successful attempts at less common collocations.\",\n        \"strengths\": [\n          \"Good topic vocabulary such as 'virtual messages' and 'convenient connection'\"\n        ],\n        \"weaknesses\": [\n          \"Word choice occasionally lacks precision ('convenient connection options')\"\n        ],\n        \"bandGapAnalysis\": \"Incorporate more precise academic nouns such as 'instantaneous communication' or 'interpersonal bonds'.\"\n      },\n      {\n        \"criterion\": \"GRAMMATICAL_RANGE_ACCURACY\",\n        \"score\": 5.0,\n        \"summary\": \"Uses a mix of simple and complex sentence forms. Frequent minor errors in preposition choice and punctuation.\",\n        \"strengths\": [\n          \"Controlled simple sentences with correct subject-verb agreement\"\n        ],\n        \"weaknesses\": [\n          \"Missing comma before coordinating conjunctions in compound sentences\"\n        ],\n        \"bandGapAnalysis\": \"Master punctuation rules in compound-complex sentences to achieve higher grammatical control.\"\n      }\n    ],\n    \"corrections\": [\n      {\n        \"startIndex\": 108,\n        \"endIndex\": 173,\n        \"originalSentence\": \"Some people think these devices improve communication between people\",\n        \"correctedSentence\": \"Some individuals believe that these devices enhance interpersonal communication\",\n        \"errorType\": \"VOCABULARY\",\n        \"severity\": \"MINOR\",\n        \"explanation\": \"Replacing basic words like 'think' and 'between people' improves academic tone.\",\n        \"enhancedOptions\": {\n          \"band7Option\": \"Some individuals argue that mobile devices significantly facilitate interpersonal communication.\",\n          \"band8Option\": \"Proponents contend that handheld technology drastically elevates the speed and scope of interpersonal communication.\"\n        }\n      },\n      {\n        \"startIndex\": 512,\n        \"endIndex\": 602,\n        \"originalSentence\": \"high quality personal communication.\",\n        \"correctedSentence\": \"high-quality interpersonal communication.\",\n        \"errorType\": \"GRAMMAR\",\n        \"severity\": \"MINOR\",\n        \"explanation\": \"Use a hyphen for compound adjectives preceding a noun ('high-quality').\",\n        \"enhancedOptions\": {\n          \"band7Option\": \"...to preserve high-quality, face-to-face interpersonal interactions.\",\n          \"band8Option\": \"...to safeguard the depth and authenticity of meaningful interpersonal discourse.\"\n        }\n      }\n    ],\n    \"cohesiveDeviceAnalysis\": {\n      \"usedDevices\": [\n        \"On the one hand\",\n        \"On the other hand\",\n        \"Moreover\",\n        \"Furthermore\",\n        \"In my opinion\"\n      ],\n      \"overusedOrRepetitive\": [\n        \"Furthermore\",\n        \"On the one hand\"\n      ],\n      \"suggestedTransitions\": [\n        \"Conversely\",\n        \"In addition to this\",\n        \"Consequently\"\n      ]\n    },\n    \"vocabularyUpgrades\": [\n      {\n        \"originalWord\": \"important part\",\n        \"contextInEssay\": \"mobile phones have become an essential part of daily life\",\n        \"academicAlternatives\": [\n          \"integral component\",\n          \"indispensable element\"\n        ],\n        \"recommendedCollocations\": [\n          \"play an integral role\",\n          \"indispensable asset\"\n        ]\n      }\n    ],\n    \"improvementTips\": [\n      {\n        \"category\": \"COHERENCE_COHESION\",\n        \"tipText\": \"Thay thế các từ nối lặp lại như 'Furthermore' bằng 'In addition' hoặc các cấu trúc tham chiếu tự nhiên hơn.\",\n        \"targetBand\": 6.5\n      }\n    ]\n  }\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/writing/webhook/result",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"writing",
+						"webhook",
+						"result"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "03. Get Final Graded Result (Client Poll)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"pm.test(\"Overall Band is calculated accurately (5.5)\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.overallBand).to.eql(5.5);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/v1/writing/submissions/{{currentSubmissionId}}?studentId=3fa85f64-5717-4562-b3fc-2c963f66afa6",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"writing",
+						"submissions",
+						"{{currentSubmissionId}}"
+					],
+					"query": [
+						{
+							"key": "studentId",
+							"value": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

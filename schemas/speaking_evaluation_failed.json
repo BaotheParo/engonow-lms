@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engonow.com/schemas/speaking_evaluation_failed.json",
+  "title": "SpeakingEvaluationFailedPayload",
+  "description": "Payload emitted when an IELTS Speaking evaluation encounter an error or audio corruption issue.",
+  "type": "object",
+  "required": [
+    "attemptId",
+    "errorCode",
+    "errorMessage",
+    "isRetriable",
+    "failedAt"
+  ],
+  "properties": {
+    "attemptId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the failed speaking attempt."
+    },
+    "errorCode": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical machine-readable error code (e.g. AUDIO_DOWNLOAD_FAILED, CHECKSUM_MISMATCH, SILENT_AUDIO_DETECTED)."
+    },
+    "errorMessage": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Detailed human-readable error diagnostic message."
+    },
+    "isRetriable": {
+      "type": "boolean",
+      "description": "Indicates whether the message can be safely re-queued to the retry topic."
+    },
+    "failedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the failure occurred (ISO-8601 UTC)."
+    }
+  },
+  "additionalProperties": false
+}
