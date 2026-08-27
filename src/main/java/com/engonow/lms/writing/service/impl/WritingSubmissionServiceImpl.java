@@ -55,11 +55,27 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
     private final InboxEventRepository inboxEventRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ObjectMapper objectMapper;
+    private final com.engonow.lms.metrics.CalibrationMetricsService metricsService;
+
+    public WritingSubmissionServiceImpl(
+            WritingSubmissionRepository writingSubmissionRepository,
+            WritingResultRepository writingResultRepository,
+            OutboxEventRepository outboxEventRepository,
+            InboxEventRepository inboxEventRepository,
+            ApplicationEventPublisher applicationEventPublisher,
+            ObjectMapper objectMapper) {
+        this(writingSubmissionRepository, writingResultRepository, outboxEventRepository,
+             inboxEventRepository, applicationEventPublisher, objectMapper, null);
+    }
 
     @Override
     public WritingSubmissionResponseDTO submitEssay(WritingSubmissionRequestDTO request) {
         log.info("Received IELTS Writing submission request for student: {}, taskType: {}",
             request.studentId(), request.taskType());
+
+        if (metricsService != null) {
+            metricsService.recordSubmissionReceived("WRITING", request.taskType().name());
+        }
 
         // 1. Persist submission in PENDING status atomically
         int wordCount = WritingSubmissionRequestDTO.countWords(request.essayText());
@@ -212,6 +228,10 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
         submission.markAsScored();
         writingSubmissionRepository.save(submission);
 
+        if (metricsService != null) {
+            metricsService.recordResultPersisted("WRITING", "AI_AUTO", overallBand.doubleValue(), submission.getTaskType().name());
+        }
+
         log.info("Successfully persisted WritingResult for submission {}, overallBand={}, version={}",
             submission.getId(), overallBand, nextVersion);
     }
@@ -279,6 +299,10 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
         // 6. Transition WritingSubmission to SCORED
         submission.markAsScored();
         writingSubmissionRepository.save(submission);
+
+        if (metricsService != null) {
+            metricsService.recordResultPersisted("WRITING", "AI_AUTO", overallBand.doubleValue(), submission.getTaskType().name());
+        }
 
         log.info("Successfully processed evaluation completed event and saved WritingResult for submission {}, overallBand={}, version={}",
             submission.getId(), overallBand, nextVersion);

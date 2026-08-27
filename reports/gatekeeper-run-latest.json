@@ -1,0 +1,81 @@
+{
+  "subsystem": "WRITING",
+  "dataset_split": "GATEKEEPER",
+  "corpus_snapshot_id": "snap-gatekeeper-v1",
+  "evaluated_at": "2026-08-26T04:31:35.778948+00:00",
+  "total_items": 5,
+  "overall_mae": 0.0,
+  "max_criterion_mae": 0.0,
+  "worst_criterion": "COHERENCE_COHESION",
+  "criterion_mae": {
+    "COHERENCE_COHESION": 0.0,
+    "GRAMMATICAL_RANGE_ACCURACY": 0.0,
+    "LEXICAL_RESOURCE": 0.0,
+    "TASK_RESPONSE": 0.0
+  },
+  "per_stratum_metrics": {
+    "4.0-4.5": {
+      "stratum": "4.0-4.5",
+      "item_count": 1,
+      "overall_mae": 0.0,
+      "criterion_mae": {
+        "COHERENCE_COHESION": 0.0,
+        "GRAMMATICAL_RANGE_ACCURACY": 0.0,
+        "LEXICAL_RESOURCE": 0.0,
+        "TASK_RESPONSE": 0.0
+      },
+      "passed": true
+    },
+    "5.0-5.5": {
+      "stratum": "5.0-5.5",
+      "item_count": 1,
+      "overall_mae": 0.0,
+      "criterion_mae": {
+        "COHERENCE_COHESION": 0.0,
+        "GRAMMATICAL_RANGE_ACCURACY": 0.0,
+        "LEXICAL_RESOURCE": 0.0,
+        "TASK_RESPONSE": 0.0
+      },
+      "passed": true
+    },
+    "6.0-6.5": {
+      "stratum": "6.0-6.5",
+      "item_count": 1,
+      "overall_mae": 0.0,
+      "criterion_mae": {
+        "COHERENCE_COHESION": 0.0,
+        "GRAMMATICAL_RANGE_ACCURACY": 0.0,
+        "LEXICAL_RESOURCE": 0.0,
+        "TASK_RESPONSE": 0.0
+      },
+      "passed": true
+    },
+    "7.0-7.5": {
+      "stratum": "7.0-7.5",
+      "item_count": 1,
+      "overall_mae": 0.0,
+      "criterion_mae": {
+        "COHERENCE_COHESION": 0.0,
+        "GRAMMATICAL_RANGE_ACCURACY": 0.0,
+        "LEXICAL_RESOURCE": 0.0,
+        "TASK_RESPONSE": 0.0
+      },
+      "passed": true
+    },
+    "8.0-8.5": {
+      "stratum": "8.0-8.5",
+      "item_count": 1,
+      "overall_mae": 0.0,
+      "criterion_mae": {
+        "COHERENCE_COHESION": 0.0,
+        "GRAMMATICAL_RANGE_ACCURACY": 0.0,
+        "LEXICAL_RESOURCE": 0.0,
+        "TASK_RESPONSE": 0.0
+      },
+      "passed": true
+    }
+  },
+  "is_acceptable": true,
+  "failure_reasons": [],
+  "diagnostics": []
+}

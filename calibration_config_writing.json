@@ -1,0 +1,62 @@
+{
+  "configVersion": "2026.09.01-v1.1",
+  "subsystem": "WRITING",
+  "promptTemplateRef": "providers/prompts/writing_system.txt",
+  "geminiModel": "gemini-2.5-flash",
+  "corpusSnapshotId": "snap-writing-20260825-001",
+  "acceptanceThresholds": {
+    "overallMae": 0.5,
+    "maxCriterionMae": 0.75,
+    "minRaterPoolIcc": 0.8
+  },
+  "fewShotAnchors": [
+    {
+      "criterion": "GRAMMATICAL_RANGE_ACCURACY",
+      "band": 4.0,
+      "corpusItemId": "item-writing-gram-40",
+      "rationale": "Frequent basic grammatical and punctuation errors distort meaning."
+    },
+    {
+      "criterion": "GRAMMATICAL_RANGE_ACCURACY",
+      "band": 8.0,
+      "corpusItemId": "item-writing-gram-80",
+      "rationale": "Wide range of complex structures with high flexibility and rare minor slips."
+    },
+    {
+      "criterion": "LEXICAL_RESOURCE",
+      "band": 4.0,
+      "corpusItemId": "item-writing-lex-40",
+      "rationale": "Extremely repetitive and limited vocabulary with frequent spelling errors."
+    },
+    {
+      "criterion": "LEXICAL_RESOURCE",
+      "band": 8.0,
+      "corpusItemId": "item-writing-lex-80",
+      "rationale": "Skillfully uses uncommon lexical items and natural collocation."
+    }
+  ],
+  "criterionLeniencyAdjustment": {
+    "LEXICAL_RESOURCE": 0.0,
+    "GRAMMATICAL_RANGE_ACCURACY": 0.0
+  },
+  "gatekeeperEvaluation": {
+    "evaluatedAt": "2026-08-26T04:31:52.516183+00:00",
+    "overallMae": 0.0,
+    "result": "PASSED"
+  },
+  "changeLog": [
+    {
+      "version": "2026.09.01-v1",
+      "timestamp": "2026-08-25T00:00:00Z",
+      "author": "Principal MLOps Architect",
+      "change": "Initial baseline calibration config for IELTS Writing Subsystem"
+    },
+    {
+      "version": "2026.09.01-v1.1",
+      "timestamp": "2026-08-26T04:31:52.516183+00:00",
+      "author": "Automated Gatekeeper",
+      "change": "Gatekeeper CI verification passed. MAE=0.0",
+      "gatekeeperMae": 0.0
+    }
+  ]
+}

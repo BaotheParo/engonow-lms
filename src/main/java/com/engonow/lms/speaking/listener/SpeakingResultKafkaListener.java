@@ -31,6 +31,14 @@ public class SpeakingResultKafkaListener {
     private final SpeakingSessionResultRepository speakingSessionResultRepository;
     private final InboxEventRepository inboxEventRepository;
     private final ObjectMapper objectMapper;
+    private final com.engonow.lms.metrics.CalibrationMetricsService metricsService;
+
+    public SpeakingResultKafkaListener(
+            SpeakingSessionResultRepository speakingSessionResultRepository,
+            InboxEventRepository inboxEventRepository,
+            ObjectMapper objectMapper) {
+        this(speakingSessionResultRepository, inboxEventRepository, objectMapper, null);
+    }
 
     @KafkaListener(
         topics = "engonow.speaking.evaluation-completed.v1",
@@ -95,6 +103,16 @@ public class SpeakingResultKafkaListener {
             }
 
             speakingSessionResultRepository.save(result);
+
+            if (metricsService != null) {
+                metricsService.recordResultPersisted(
+                    "SPEAKING",
+                    "AI_AUTO",
+                    overallBand.doubleValue(),
+                    "PART_1"
+                );
+            }
+
             log.info("[SPEAKING CONSUMER] Successfully saved SpeakingSessionResult for attempt {}, overallBand={}",
                 sessionId, overallBand);
 

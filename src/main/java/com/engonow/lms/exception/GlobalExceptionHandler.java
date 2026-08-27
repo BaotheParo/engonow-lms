@@ -18,9 +18,12 @@ import java.time.LocalDateTime;
 @Slf4j
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(IdempotencyException.class)
-    public ResponseEntity<ErrorResponse> handleIdempotencyException(IdempotencyException e, WebRequest request) {
-        log.warn("IdempotencyException: {}", e.getMessage());
+    @ExceptionHandler({
+        IdempotencyException.class,
+        com.engonow.lms.calibration.exception.DuplicateRatingException.class
+    })
+    public ResponseEntity<ErrorResponse> handleConflictException(RuntimeException e, WebRequest request) {
+        log.warn("ConflictException [{}]: {}", e.getClass().getSimpleName(), e.getMessage());
         ErrorResponse errorResponse = new ErrorResponse(
                 LocalDateTime.now(),
                 HttpStatus.CONFLICT.value(),

@@ -14,3 +14,10 @@ __pycache__/
 benchmark_progress.json
 uvicorn.log
 *.log
+*.tmp
+*.tmp.*
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

@@ -2,10 +2,10 @@ package com.engonow.lms.scheduler;
 
 import com.engonow.lms.entity.OutboxEvent;
 import com.engonow.lms.enums.OutboxStatus;
+import com.engonow.lms.metrics.CalibrationMetricsService;
 import com.engonow.lms.metrics.TelemetryManager;
 import com.engonow.lms.publisher.MessagePublisher;
 import com.engonow.lms.repository.OutboxEventRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -22,7 +22,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Component
 @Slf4j
-@RequiredArgsConstructor
 public class OutboxRelayScheduler {
 
     private static final int MAX_RETRIES = 3;
@@ -32,7 +31,29 @@ public class OutboxRelayScheduler {
     private final MessagePublisher messagePublisher;
     private final TelemetryManager telemetryManager;
     private final TransactionTemplate transactionTemplate;
+    private final CalibrationMetricsService metricsService;
     private final AtomicBoolean relayRunning = new AtomicBoolean(false);
+
+    public OutboxRelayScheduler(
+            OutboxEventRepository outboxEventRepository,
+            MessagePublisher messagePublisher,
+            TelemetryManager telemetryManager,
+            TransactionTemplate transactionTemplate,
+            CalibrationMetricsService metricsService) {
+        this.outboxEventRepository = outboxEventRepository;
+        this.messagePublisher = messagePublisher;
+        this.telemetryManager = telemetryManager;
+        this.transactionTemplate = transactionTemplate;
+        this.metricsService = metricsService;
+    }
+
+    public OutboxRelayScheduler(
+            OutboxEventRepository outboxEventRepository,
+            MessagePublisher messagePublisher,
+            TelemetryManager telemetryManager,
+            TransactionTemplate transactionTemplate) {
+        this(outboxEventRepository, messagePublisher, telemetryManager, transactionTemplate, null);
+    }
 
     @Scheduled(fixedDelayString = "${engonow.outbox.reconciliation-delay-ms:10000}")
     public void processPendingOutboxEvents() {
@@ -56,6 +77,14 @@ public class OutboxRelayScheduler {
                 }
                 return events;
             });
+
+            if (metricsService != null) {
+                long oldestAge = 0;
+                if (pendingEvents != null && !pendingEvents.isEmpty() && pendingEvents.get(0).getCreatedAt() != null) {
+                    oldestAge = Duration.between(pendingEvents.get(0).getCreatedAt(), Instant.now()).getSeconds();
+                }
+                metricsService.updateOutboxBacklog("all", pendingEvents != null ? pendingEvents.size() : 0, Math.max(0, oldestAge));
+            }
 
             if (pendingEvents == null || pendingEvents.isEmpty()) {
                 return;
@@ -110,24 +139,7 @@ public class OutboxRelayScheduler {
         }
     }
 
-    @Scheduled(cron = "${engonow.outbox.cleanup-cron:0 0 2 * * ?}")
-    public void cleanupOldPublishedEvents() {
-        try {
-            Instant threshold = Instant.now().minus(Duration.ofDays(7));
-            Integer deleted = transactionTemplate.execute(status -> 
-                outboxEventRepository.deleteByStatusAndPublishedAtBefore(OutboxStatus.PUBLISHED, threshold)
-            );
-            if (deleted != null && deleted > 0) {
-                log.info("[OUTBOX CLEANUP] Purged {} stale published outbox events older than 7 days", deleted);
-            }
-        } catch (Exception ex) {
-            log.error("[OUTBOX CLEANUP] Failed to purge old published outbox events: {}", ex.getMessage(), ex);
-        }
-    }
-
-    private String errorMessage(Exception exception) {
-        return exception.getMessage() != null
-            ? exception.getMessage()
-            : exception.getClass().getSimpleName();
+    private String errorMessage(Throwable t) {
+        return (t == null || t.getMessage() == null) ? "Unknown error" : t.getMessage();
     }
 }

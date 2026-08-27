@@ -1,0 +1,53 @@
+{
+  "configVersion": "2026.09.01-v1",
+  "subsystem": "SPEAKING",
+  "promptTemplateRef": "providers/prompts/speaking_system.txt",
+  "geminiModel": "gemini-2.5-flash",
+  "corpusSnapshotId": "snap-speaking-20260825-001",
+  "acceptanceThresholds": {
+    "overallMae": 0.5,
+    "maxCriterionMae": 0.75,
+    "minRaterPoolIcc": 0.8
+  },
+  "fewShotAnchors": [
+    {
+      "criterion": "FLUENCY_COHERENCE",
+      "band": 4.0,
+      "corpusItemId": "item-speaking-fc-40",
+      "rationale": "Frequent noticeable pauses, false starts, and slow speech rate."
+    },
+    {
+      "criterion": "FLUENCY_COHERENCE",
+      "band": 8.0,
+      "corpusItemId": "item-speaking-fc-80",
+      "rationale": "Speaks fluently with only rare repetition or self-correction; coherence is effortless."
+    },
+    {
+      "criterion": "PRONUNCIATION",
+      "band": 4.0,
+      "corpusItemId": "item-speaking-pr-40",
+      "rationale": "Frequent phoneme mispronunciations requiring listener effort."
+    },
+    {
+      "criterion": "PRONUNCIATION",
+      "band": 8.0,
+      "corpusItemId": "item-speaking-pr-80",
+      "rationale": "Uses a wide range of pronunciation features with flexible intonation and rhythm."
+    }
+  ],
+  "criterionLeniencyAdjustment": {
+    "FLUENCY_COHERENCE": 0.0,
+    "PRONUNCIATION": 0.0
+  },
+  "gatekeeperEvaluation": {
+    "result": "PENDING"
+  },
+  "changeLog": [
+    {
+      "version": "2026.09.01-v1",
+      "timestamp": "2026-08-25T00:00:00Z",
+      "author": "Principal MLOps Architect",
+      "change": "Initial baseline calibration config for IELTS Speaking Subsystem"
+    }
+  ]
+}
