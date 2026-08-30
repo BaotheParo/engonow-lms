@@ -44,7 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
     "engonow.broker.type=KAFKA",
     "spring.flyway.clean-disabled=false"
 })
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class WritingOutboxIntegrationTest {
 
     @Container

@@ -85,4 +85,19 @@ public class RedisConfig {
         redisTemplate.setHashValueSerializer(new StringRedisSerializer());
         return redisTemplate;
     }
+
+    /**
+     * Creates the RedisMessageListenerContainer for dynamic Pub/Sub event subscriptions.
+     *
+     * @param connectionFactory pooled Lettuce connection factory
+     * @return Redis message listener container
+     */
+    @Bean
+    public org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer(
+            RedisConnectionFactory connectionFactory) {
+        org.springframework.data.redis.listener.RedisMessageListenerContainer container =
+                new org.springframework.data.redis.listener.RedisMessageListenerContainer();
+        container.setConnectionFactory(connectionFactory);
+        return container;
+    }
 }

@@ -5,6 +5,7 @@ import com.engonow.lms.enums.*;
 import com.engonow.lms.repository.*;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,6 +13,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 
 @Component
+@Slf4j
 public class DatabaseSeeder {
 
     private final UserRepository userRepository;
@@ -41,7 +43,7 @@ public class DatabaseSeeder {
 
     @Transactional
     public void seed() {
-        System.out.println("[SEED] Clearing existing data...");
+        log.info("[SEED] Clearing existing data...");
         // Disable foreign key checks to allow fast and safe truncation/deletion of all tables
         entityManager.createNativeQuery("SET FOREIGN_KEY_CHECKS = 0").executeUpdate();
 
@@ -55,7 +57,7 @@ public class DatabaseSeeder {
         // Re-enable foreign key checks after clear
         entityManager.createNativeQuery("SET FOREIGN_KEY_CHECKS = 1").executeUpdate();
 
-        System.out.println("[SEED] Seeding fresh test data...");
+        log.info("[SEED] Seeding fresh test data...");
 
         // 1. Users
         User student = User.builder()
@@ -117,7 +119,8 @@ public class DatabaseSeeder {
                 .build();
         booking = bookingRepository.save(booking);
 
-        System.out.println("[SEED] Database seeding complete.");
-        System.out.println("[SEED] Test IDs: examId = " + exam.getId() + ", studentId = " + student.getId() + ", bookingId/sessionId = " + booking.getId());
+        log.info("[SEED] Database seeding complete.");
+        log.info("[SEED] Test IDs: examId = {}, studentId = {}, bookingId/sessionId = {}",
+            exam.getId(), student.getId(), booking.getId());
     }
 }

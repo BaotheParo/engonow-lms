@@ -35,4 +35,21 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /**
+     * Dedicated ThreadPoolTaskScheduler for @Scheduled tasks (SSE heartbeat pings, outbox polling).
+     * Prevents single-threaded scheduler bottleneck under high concurrent SSE subscribers.
+     */
+    @Bean(name = "taskScheduler")
+    public org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler taskScheduler() {
+        org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler scheduler =
+            new org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(8);
+        scheduler.setThreadNamePrefix("engonow-scheduled-");
+        scheduler.setWaitForTasksToCompleteOnShutdown(true);
+        scheduler.setAwaitTerminationSeconds(30);
+        scheduler.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        scheduler.initialize();
+        return scheduler;
+    }
 }

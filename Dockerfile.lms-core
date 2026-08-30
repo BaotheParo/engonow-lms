@@ -1,0 +1,63 @@
+# ==============================================================================
+# ENGONOW LMS Core - Production Multi-Stage Layered Dockerfile (Phase 4.6)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Stage 1: Build & Package
+# ------------------------------------------------------------------------------
+FROM eclipse-temurin:21-jdk-alpine AS builder
+
+WORKDIR /build
+
+# Install Maven
+RUN apk add --no-cache maven
+
+# Pre-fetch Maven dependencies for efficient Docker layer caching
+COPY pom.xml ./
+RUN mvn dependency:go-offline -B
+
+# Copy source code and build application JAR
+COPY src ./src
+RUN mvn clean package -DskipTests -B
+
+# ------------------------------------------------------------------------------
+# Stage 2: Extract Layered JAR (Dependencies, Spring Boot Loader, Application)
+# ------------------------------------------------------------------------------
+FROM eclipse-temurin:21-jdk-alpine AS extractor
+
+WORKDIR /build
+
+COPY --from=builder /build/target/*.jar app.jar
+RUN java -Djarmode=layertools -jar app.jar extract --destination /build/extracted
+
+# ------------------------------------------------------------------------------
+# Stage 3: Hardened Production Runtime Image
+# ------------------------------------------------------------------------------
+FROM eclipse-temurin:21-jre-alpine AS runtime
+
+WORKDIR /app
+
+# Install wget/curl for container healthcheck
+RUN apk add --no-cache wget curl
+
+# Create non-root system user and group
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+# Copy extracted layers in ascending order of change frequency to optimize caching
+COPY --from=extractor --chown=appuser:appgroup /build/extracted/dependencies/ ./
+COPY --from=extractor --chown=appuser:appgroup /build/extracted/spring-boot-loader/ ./
+COPY --from=extractor --chown=appuser:appgroup /build/extracted/snapshot-dependencies/ ./
+COPY --from=extractor --chown=appuser:appgroup /build/extracted/application/ ./
+
+# JVM Container Optimization flags (Use 75% container RAM, G1GC, non-blocking entropy)
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom"
+
+# Switch to non-root execution
+USER appuser
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD wget -qO- http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS org.springframework.boot.loader.launch.JarLauncher"]

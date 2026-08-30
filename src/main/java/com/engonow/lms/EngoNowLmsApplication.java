@@ -36,6 +36,7 @@ public class EngoNowLmsApplication {
     }
 
     @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnBean(DatabaseSeeder.class)
     @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
             name = "app.seeding.enabled",
             havingValue = "true",

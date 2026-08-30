@@ -44,7 +44,7 @@ import static org.awaitility.Awaitility.await;
     "engonow.broker.type=KAFKA",
     "spring.flyway.clean-disabled=false"
 })
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class WritingResultKafkaConsumerIntegrationTest {
 
     @Container

@@ -34,12 +34,13 @@ public class OutboxRelayScheduler {
     private final CalibrationMetricsService metricsService;
     private final AtomicBoolean relayRunning = new AtomicBoolean(false);
 
+    @org.springframework.beans.factory.annotation.Autowired
     public OutboxRelayScheduler(
             OutboxEventRepository outboxEventRepository,
             MessagePublisher messagePublisher,
             TelemetryManager telemetryManager,
             TransactionTemplate transactionTemplate,
-            CalibrationMetricsService metricsService) {
+            @org.springframework.beans.factory.annotation.Autowired(required = false) CalibrationMetricsService metricsService) {
         this.outboxEventRepository = outboxEventRepository;
         this.messagePublisher = messagePublisher;
         this.telemetryManager = telemetryManager;

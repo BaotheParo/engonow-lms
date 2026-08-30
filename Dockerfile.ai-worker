@@ -1,0 +1,59 @@
+# ==============================================================================
+# ENGONOW AI Worker - Production Multi-Stage Dockerfile (Phase 4.6)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Stage 1: Build & Dependency Resolution
+# ------------------------------------------------------------------------------
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-worker.txt ./
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# ------------------------------------------------------------------------------
+# Stage 2: Hardened Production Runtime Image
+# ------------------------------------------------------------------------------
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+# Install runtime dependencies (ffmpeg for audio waveform ingestion, curl for diagnostics)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root application user and group
+RUN groupadd -r appgroup && useradd -r -g appgroup -d /home/appuser -m -s /sbin/nologin appuser
+
+# Copy installed Python packages from builder stage into user local directory
+COPY --from=builder --chown=appuser:appgroup /root/.local /home/appuser/.local
+ENV PATH=/home/appuser/.local/bin:$PATH
+ENV PYTHONUNBUFFERED=1
+
+# Initialize Prometheus multiprocess directory with non-root write permissions
+# Prevents PermissionError when Gunicorn worker processes write metrics
+RUN mkdir -p /tmp/prometheus_multiproc && chown -R appuser:appgroup /tmp/prometheus_multiproc
+ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
+
+# Copy application source code with non-root ownership
+COPY --chown=appuser:appgroup . /app
+
+# Switch to non-root execution
+USER appuser
+
+EXPOSE 8000
+
+# Native healthcheck using python standard library urllib
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; exit(0 if urllib.request.urlopen('http://localhost:8000/health').getcode() == 200 else 1)"
+
+# Default entrypoint runs Gunicorn with UvicornWorker and child_exit cleanup hook
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "ai_worker:app"]

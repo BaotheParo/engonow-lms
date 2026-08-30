@@ -56,6 +56,27 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ObjectMapper objectMapper;
     private final com.engonow.lms.metrics.CalibrationMetricsService metricsService;
+    private final com.engonow.lms.service.RealtimeDeliveryService realtimeDeliveryService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public WritingSubmissionServiceImpl(
+            WritingSubmissionRepository writingSubmissionRepository,
+            WritingResultRepository writingResultRepository,
+            OutboxEventRepository outboxEventRepository,
+            InboxEventRepository inboxEventRepository,
+            ApplicationEventPublisher applicationEventPublisher,
+            ObjectMapper objectMapper,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) com.engonow.lms.metrics.CalibrationMetricsService metricsService,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) com.engonow.lms.service.RealtimeDeliveryService realtimeDeliveryService) {
+        this.writingSubmissionRepository = writingSubmissionRepository;
+        this.writingResultRepository = writingResultRepository;
+        this.outboxEventRepository = outboxEventRepository;
+        this.inboxEventRepository = inboxEventRepository;
+        this.applicationEventPublisher = applicationEventPublisher;
+        this.objectMapper = objectMapper;
+        this.metricsService = metricsService;
+        this.realtimeDeliveryService = realtimeDeliveryService;
+    }
 
     public WritingSubmissionServiceImpl(
             WritingSubmissionRepository writingSubmissionRepository,
@@ -65,7 +86,19 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
             ApplicationEventPublisher applicationEventPublisher,
             ObjectMapper objectMapper) {
         this(writingSubmissionRepository, writingResultRepository, outboxEventRepository,
-             inboxEventRepository, applicationEventPublisher, objectMapper, null);
+             inboxEventRepository, applicationEventPublisher, objectMapper, null, null);
+    }
+
+    public WritingSubmissionServiceImpl(
+            WritingSubmissionRepository writingSubmissionRepository,
+            WritingResultRepository writingResultRepository,
+            OutboxEventRepository outboxEventRepository,
+            InboxEventRepository inboxEventRepository,
+            ApplicationEventPublisher applicationEventPublisher,
+            ObjectMapper objectMapper,
+            com.engonow.lms.metrics.CalibrationMetricsService metricsService) {
+        this(writingSubmissionRepository, writingResultRepository, outboxEventRepository,
+             inboxEventRepository, applicationEventPublisher, objectMapper, metricsService, null);
     }
 
     @Override
@@ -304,6 +337,18 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
             metricsService.recordResultPersisted("WRITING", "AI_AUTO", overallBand.doubleValue(), submission.getTaskType().name());
         }
 
+        if (realtimeDeliveryService != null) {
+            realtimeDeliveryService.broadcastStatusChange(
+                com.engonow.lms.dto.SubmissionStatusEventDTO.builder()
+                    .status("SCORED")
+                    .submissionId(submission.getId())
+                    .resultId(result.getId())
+                    .subsystem("WRITING")
+                    .timestamp(Instant.now())
+                    .build()
+            );
+        }
+
         log.info("Successfully processed evaluation completed event and saved WritingResult for submission {}, overallBand={}, version={}",
             submission.getId(), overallBand, nextVersion);
     }
@@ -337,6 +382,18 @@ public class WritingSubmissionServiceImpl implements WritingSubmissionService {
 
         submission.setStatus(SubmissionStatus.FAILED);
         writingSubmissionRepository.save(submission);
+
+        if (realtimeDeliveryService != null) {
+            realtimeDeliveryService.broadcastStatusChange(
+                com.engonow.lms.dto.SubmissionStatusEventDTO.builder()
+                    .status("FAILED")
+                    .submissionId(submission.getId())
+                    .resultId(null)
+                    .subsystem("WRITING")
+                    .timestamp(Instant.now())
+                    .build()
+            );
+        }
 
         log.info("Successfully marked submission {} as FAILED following evaluation failure event", submission.getId());
     }

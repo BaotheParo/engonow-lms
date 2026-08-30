@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -32,12 +33,35 @@ public class SpeakingResultKafkaListener {
     private final InboxEventRepository inboxEventRepository;
     private final ObjectMapper objectMapper;
     private final com.engonow.lms.metrics.CalibrationMetricsService metricsService;
+    private final com.engonow.lms.service.RealtimeDeliveryService realtimeDeliveryService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public SpeakingResultKafkaListener(
+            SpeakingSessionResultRepository speakingSessionResultRepository,
+            InboxEventRepository inboxEventRepository,
+            ObjectMapper objectMapper,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) com.engonow.lms.metrics.CalibrationMetricsService metricsService,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) com.engonow.lms.service.RealtimeDeliveryService realtimeDeliveryService) {
+        this.speakingSessionResultRepository = speakingSessionResultRepository;
+        this.inboxEventRepository = inboxEventRepository;
+        this.objectMapper = objectMapper;
+        this.metricsService = metricsService;
+        this.realtimeDeliveryService = realtimeDeliveryService;
+    }
 
     public SpeakingResultKafkaListener(
             SpeakingSessionResultRepository speakingSessionResultRepository,
             InboxEventRepository inboxEventRepository,
             ObjectMapper objectMapper) {
-        this(speakingSessionResultRepository, inboxEventRepository, objectMapper, null);
+        this(speakingSessionResultRepository, inboxEventRepository, objectMapper, null, null);
+    }
+
+    public SpeakingResultKafkaListener(
+            SpeakingSessionResultRepository speakingSessionResultRepository,
+            InboxEventRepository inboxEventRepository,
+            ObjectMapper objectMapper,
+            com.engonow.lms.metrics.CalibrationMetricsService metricsService) {
+        this(speakingSessionResultRepository, inboxEventRepository, objectMapper, metricsService, null);
     }
 
     @KafkaListener(
@@ -113,6 +137,21 @@ public class SpeakingResultKafkaListener {
                 );
             }
 
+            if (realtimeDeliveryService != null) {
+                UUID resId = result.getId() != null
+                    ? UUID.nameUUIDFromBytes(result.getId().toString().getBytes(StandardCharsets.UTF_8))
+                    : null;
+                realtimeDeliveryService.broadcastStatusChange(
+                    com.engonow.lms.dto.SubmissionStatusEventDTO.builder()
+                        .status("SCORED")
+                        .submissionId(payload.attemptId())
+                        .resultId(resId)
+                        .subsystem("SPEAKING")
+                        .timestamp(java.time.Instant.now())
+                        .build()
+                );
+            }
+
             log.info("[SPEAKING CONSUMER] Successfully saved SpeakingSessionResult for attempt {}, overallBand={}",
                 sessionId, overallBand);
 
@@ -149,6 +188,18 @@ public class SpeakingResultKafkaListener {
                 speakingSessionResultRepository.save(result);
                 log.info("[SPEAKING CONSUMER] Marked attempt {} as FAILED", sessionId);
             });
+
+            if (realtimeDeliveryService != null) {
+                realtimeDeliveryService.broadcastStatusChange(
+                    com.engonow.lms.dto.SubmissionStatusEventDTO.builder()
+                        .status("FAILED")
+                        .submissionId(envelope.payload().attemptId())
+                        .resultId(null)
+                        .subsystem("SPEAKING")
+                        .timestamp(java.time.Instant.now())
+                        .build()
+                );
+            }
 
             if (ack != null) {
                 ack.acknowledge();

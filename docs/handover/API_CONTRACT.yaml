@@ -1,0 +1,443 @@
+openapi: 3.1.0
+info:
+  title: ENGONOW Smart LMS — AI Scoring & Evaluation Platform API
+  description: >
+    Complete OpenAPI 3.1 specification for the ENGONOW Smart LMS, covering
+    IELTS AI Writing assessment, claim-check AI Speaking assessment, psychometric
+    calibration administration, Server-Sent Events (SSE) live streaming, and deep tiered health monitoring.
+  version: 1.0.0
+  contact:
+    name: ENGONOW Core Engineering Team
+    email: engineering@engonow.com
+
+servers:
+  - url: http://localhost:8080
+    description: Local / Docker Compose Environment
+  - url: https://api.engonow.com
+    description: Production Cluster Gateway
+
+paths:
+  # ----------------------------------------------------------------------------
+  # Writing Submissions & Results
+  # ----------------------------------------------------------------------------
+  /api/v1/writing/submissions/submit:
+    post:
+      summary: Submit IELTS essay for asynchronous AI scoring
+      description: Validates word count, persists submission in PENDING state, and emits transactional Outbox event to Kafka.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WritingSubmissionRequest'
+      responses:
+        '202':
+          description: Essay submission accepted and queued for evaluation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritingSubmissionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/v1/writing/submissions/{id}/result:
+    get:
+      summary: Query final evaluated IELTS Writing score and detailed feedback
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Evaluated scoring result retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritingResultResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          description: Submission still pending or processing
+
+  /api/v1/writing-submissions/{id}/events:
+    get:
+      summary: Real-Time SSE Stream for Writing Submission Status
+      description: >
+        Establishes a Server-Sent Events connection. Immediately replays current DB status,
+        then streams live status transitions (PENDING -> PROCESSING -> SCORED/FAILED) via Redis Pub/Sub fan-out.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Live SSE event stream established
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: "event: status\ndata: {\"status\":\"SCORED\",\"submissionId\":\"...\",\"resultId\":\"...\"}\n\n"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  # ----------------------------------------------------------------------------
+  # Speaking Submissions & Results (Claim-Check Pattern)
+  # ----------------------------------------------------------------------------
+  /api/v1/speaking/submit:
+    post:
+      summary: Submit IELTS Speaking attempt via audio claim-check URI
+      description: Accepts object storage audio URI (zero audio bytes on Kafka) and queues multimodal acoustic + LLM evaluation.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeakingSubmissionRequest'
+      responses:
+        '202':
+          description: Speaking attempt accepted for scoring
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeakingSubmissionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/v1/speaking-submissions/{id}/events:
+    get:
+      summary: Real-Time SSE Stream for Speaking Attempt Status
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Live SSE event stream established
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  # ----------------------------------------------------------------------------
+  # Psychometric Calibration & Admin APIs (ROLE_ADMIN Required)
+  # ----------------------------------------------------------------------------
+  /api/v1/admin/calibration/corpus-items:
+    post:
+      summary: Ingest Ground-Truth Calibration Item
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CorpusItemCreateRequest'
+      responses:
+        '201':
+          description: Calibration item ingested successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/v1/admin/calibration/items/{id}/ratings:
+    post:
+      summary: Submit Human Examiner Rating for Inter-Rater Reliability (ICC)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HumanRatingSubmitRequest'
+      responses:
+        '201':
+          description: Human rating recorded
+
+  /api/v1/admin/calibration/items/{id}/adjudicate:
+    post:
+      summary: Senior Examiner Adjudication for Discordant Items
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeniorAdjudicationRequest'
+      responses:
+        '200':
+          description: Item adjudicated and consensus reference score set
+
+  /api/v1/admin/calibration/lock-split:
+    post:
+      summary: Execute Stratified 60/40 Split Lock (Tuning vs. Gatekeeper)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Dataset splits locked permanently
+
+  # ----------------------------------------------------------------------------
+  # Observability & Deep Tiered Health
+  # ----------------------------------------------------------------------------
+  /health:
+    get:
+      summary: Tiered Deep Health Check Endpoint
+      description: >
+        Inspects in-memory circuit breaker states, Redis connectivity, PostgreSQL connection pool,
+        and Kafka health without performing live LLM billing calls.
+      responses:
+        '200':
+          description: Health check returned successfully (UP, DEGRADED, or DOWN)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatusResponse'
+
+  /actuator/prometheus:
+    get:
+      summary: Prometheus Metrics Scrape Endpoint (Java LMS Core)
+      responses:
+        '200':
+          description: Standard Prometheus text format metrics
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    WritingSubmissionRequest:
+      type: object
+      required: [studentId, taskType, promptText, essayText]
+      properties:
+        studentId:
+          type: string
+          format: uuid
+        taskType:
+          type: string
+          enum: [TASK1_ACADEMIC, TASK1_GENERAL, TASK2]
+        promptText:
+          type: string
+        essayText:
+          type: string
+
+    WritingSubmissionResponse:
+      type: object
+      properties:
+        submissionId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, SCORED, FAILED]
+        createdAt:
+          type: string
+          format: date-time
+
+    WritingResultResponse:
+      type: object
+      properties:
+        resultId:
+          type: string
+          format: uuid
+        submissionId:
+          type: string
+          format: uuid
+        overallBand:
+          type: number
+          format: double
+          example: 7.5
+        taskAchievementScore:
+          type: number
+        coherenceCohesionScore:
+          type: number
+        lexicalResourceScore:
+          type: number
+        grammaticalRangeScore:
+          type: number
+        evaluatedBy:
+          type: string
+          enum: [AI_AUTO, AI_AUTO_UNCALIBRATED, HUMAN_EXAMINER]
+        feedbackDetail:
+          type: object
+
+    SpeakingSubmissionRequest:
+      type: object
+      required: [attemptId, studentId, part, audioUrl]
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        part:
+          type: string
+          enum: [PART_1, PART_2, PART_3]
+        audioUrl:
+          type: string
+          format: uri
+        transcript:
+          type: string
+
+    SpeakingSubmissionResponse:
+      type: object
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ACCEPTED, PROCESSING, COMPLETED, FAILED]
+
+    CorpusItemCreateRequest:
+      type: object
+      required: [subsystem, promptText, targetBandStratum]
+      properties:
+        subsystem:
+          type: string
+          enum: [WRITING, SPEAKING]
+        promptText:
+          type: string
+        targetBandStratum:
+          type: string
+          enum: [BAND_4_5, BAND_5_5, BAND_6_5, BAND_7_5, BAND_8_5]
+
+    HumanRatingSubmitRequest:
+      type: object
+      required: [examinerId, criterionScores]
+      properties:
+        examinerId:
+          type: string
+        criterionScores:
+          type: object
+
+    SeniorAdjudicationRequest:
+      type: object
+      required: [adjudicatorId, adjudicatedScores, rationale]
+      properties:
+        adjudicatorId:
+          type: string
+        adjudicatedScores:
+          type: object
+        rationale:
+          type: string
+
+    HealthStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [UP, DEGRADED, DOWN]
+        timestamp:
+          type: string
+          format: date-time
+        components:
+          type: object
+          properties:
+            postgresql:
+              type: string
+              enum: [UP, DOWN]
+            redis:
+              type: string
+              enum: [UP, DOWN]
+            kafka:
+              type: string
+              enum: [UP, DOWN]
+            aiProviders:
+              type: object
+              properties:
+                overallStatus:
+                  type: string
+                  enum: [UP, DEGRADED, DOWN]
+
+  responses:
+    BadRequestError:
+      description: Bad Request / Schema validation failure
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+              message: { type: string }
+    UnauthorizedError:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+              status: { type: integer, example: 401 }
+    ForbiddenError:
+      description: Insufficient privileges or unauthorized submission ownership
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+              status: { type: integer, example: 403 }
+    NotFoundError:
+      description: Requested resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+              status: { type: integer, example: 404 }

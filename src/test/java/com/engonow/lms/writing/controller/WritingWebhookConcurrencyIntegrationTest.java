@@ -35,7 +35,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
-@SpringBootTest(properties = "app.seeding.enabled=true")
+@SpringBootTest(properties = {
+    "app.seeding.enabled=false",
+    "spring.flyway.enabled=false",
+    "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
+    "spring.datasource.driver-class-name=org.h2.Driver",
+    "spring.datasource.username=sa",
+    "spring.datasource.password="
+})
 @AutoConfigureMockMvc
 public class WritingWebhookConcurrencyIntegrationTest {
 

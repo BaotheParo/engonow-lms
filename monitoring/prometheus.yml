@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'lms-core'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['lms-core:8080']
+
+  - job_name: 'ai-worker'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['ai-worker:8000']
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
