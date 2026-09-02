@@ -65,14 +65,24 @@ def clear_prompt_cache() -> None:
         _load_prompt_sync.cache_clear()
 
 
-@dataclass(frozen=True)
+from typing import Optional
+
+@dataclass
 class WritingProviderConfig:
     """Immutable configuration snapshot for IELTS Writing evaluation."""
 
-    gemini_api_key: str
-    ai_model_name: str
-    system_prompt_path: str
-    user_prompt_path: str
+    gemini_api_key: str = ""
+    ai_model_name: str = "gemini-2.5-flash"
+    system_prompt_path: str = "providers/prompts/writing_system.txt"
+    user_prompt_path: str = "providers/prompts/writing_user.txt"
+    api_key: Optional[str] = None
+    model_name: Optional[str] = None
+
+    def __post_init__(self):
+        if self.api_key and not self.gemini_api_key:
+            self.gemini_api_key = self.api_key
+        if self.model_name and self.ai_model_name == "gemini-2.5-flash":
+            self.ai_model_name = self.model_name
 
 
 def load_writing_config() -> WritingProviderConfig:
@@ -97,33 +107,43 @@ def load_writing_config() -> WritingProviderConfig:
     )
 
 
-@dataclass(frozen=True)
+@dataclass
 class ProviderConfig:
     """Immutable configuration snapshot. Built once at startup."""
 
     # Primary toggle
-    provider_name: str              # "GROQ_LOCAL" or "AZURE"
+    provider_name: str = "GROQ_LOCAL"              # "GROQ_LOCAL" or "AZURE"
 
     # GROQ_LOCAL track
-    groq_api_key:   str
-    gemini_api_key: str
-    gemini_model:   str
+    groq_api_key:   str = ""
+    gemini_api_key: str = ""
+    gemini_model:   str = "gemini-2.5-flash"
 
     # AZURE track
-    azure_speech_key:      str
-    azure_speech_region:   str
-    azure_speech_language: str
+    azure_speech_key:      str = ""
+    azure_speech_region:   str = "southeastasia"
+    azure_speech_language: str = "en-US"
 
     # Shared scoring parameters
-    word_confidence_threshold: float
-    pause_annotation_min_sec:  float
-    enable_acoustic_diagnostics: bool
+    word_confidence_threshold: float = 0.70
+    pause_annotation_min_sec:  float = 0.50
+    enable_acoustic_diagnostics: bool = True
 
     # Fallback scores
-    fallback_score_pr:  int
-    fallback_score_fc:  int
-    fallback_score_gra: int
-    fallback_score_lr:  int
+    fallback_score_pr:  int = 4
+    fallback_score_fc:  int = 4
+    fallback_score_gra: int = 4
+    fallback_score_lr:  int = 4
+
+    # Ergonomic aliases for evaluation scripts
+    api_key: Optional[str] = None
+    model_name: Optional[str] = None
+
+    def __post_init__(self):
+        if self.api_key and not self.gemini_api_key:
+            self.gemini_api_key = self.api_key
+        if self.model_name and self.gemini_model == "gemini-2.5-flash":
+            self.gemini_model = self.model_name
 
 
 @dataclass(frozen=True)

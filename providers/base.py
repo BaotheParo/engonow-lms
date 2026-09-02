@@ -228,3 +228,41 @@ class AbstractWritingProvider(ABC):
 AbstractEvaluationProvider = AbstractWritingProvider
 
 
+class ProviderCallError(Exception):
+    """Raised when an LLM provider call fails or is rejected by circuit breaker."""
+    pass
+
+
+from typing import Generic, TypeVar, Any
+
+T = TypeVar("T")
+
+
+class BaseLLMProvider(Generic[T], ABC):
+    """
+    Base class for all LLM-driven evaluation providers (Writing & Speaking).
+    Encapsulates circuit breaker state checking, telemetry metrics, and generic error handling.
+    """
+
+    def __init__(
+        self,
+        provider_id: str,
+        circuit_breaker: Any = None,
+        metrics_client: Any = None,
+    ):
+        self.provider_id = provider_id
+        self.circuit_breaker = circuit_breaker
+        self.metrics_client = metrics_client
+
+    def check_circuit_breaker(self) -> None:
+        """
+        Validates whether traffic is allowed through the circuit breaker.
+        Raises ProviderCallError if circuit is OPEN / tripped.
+        """
+        if self.circuit_breaker is not None:
+            if not self.circuit_breaker.allow_request():
+                raise ProviderCallError(
+                    f"[{self.provider_id}] Request rejected: Circuit Breaker is OPEN or throttled."
+                )
+
+

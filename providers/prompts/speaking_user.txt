@@ -1,0 +1,25 @@
+Please evaluate the following IELTS Speaking candidate attempt according to the official Cambridge IELTS criteria, acoustic measurements, and strict underlength guardrails defined in your system prompt.
+
+================================================================================
+EXAM CONTEXT
+================================================================================
+Exam Part: {{exam_part}}
+Question / Prompt: {{question_title}}
+
+================================================================================
+CANDIDATE TRANSCRIPT (VERBATIM SPEECH-TO-TEXT)
+================================================================================
+{{candidate_transcript}}
+
+================================================================================
+ACOUSTIC DIAGNOSTICS MEASUREMENT VECTOR (DSP FEATURE EXTRACTION)
+================================================================================
+{{acoustic_diagnostics_json}}
+
+================================================================================
+EVALUATION DIRECTIVE
+================================================================================
+1. Verify if acoustic measurements indicate `excluded_from_automated_scoring = true`. If true, set `fluency_coherence_score = null` and `pronunciation_score = null`.
+2. Count total scorable words in the candidate transcript. If word count < 20, cap `lexical_resource_score` and `grammatical_range_score` at a maximum of Band 4.0.
+3. Compute Cambridge-rounded `overall_band`.
+4. Output the complete, strictly valid JSON response conforming to the required schema.

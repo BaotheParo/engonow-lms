@@ -69,8 +69,22 @@ class GeminiWritingProvider(AbstractWritingProvider):
     models with strict JSON structured outputs, Pydantic validation, and external prompt caching.
     """
 
-    def __init__(self, config: Optional[WritingProviderConfig] = None) -> None:
-        self.config = config or WRITING_CONFIG
+    def __init__(self, config: Optional[Any] = None) -> None:
+        if config is not None:
+            if isinstance(config, WritingProviderConfig):
+                self.config = config
+            else:
+                key = getattr(config, "api_key", None) or getattr(config, "gemini_api_key", "")
+                model = getattr(config, "model_name", None) or getattr(config, "ai_model_name", None) or getattr(config, "gemini_model", "gemini-2.5-flash")
+                self.config = WritingProviderConfig(
+                    gemini_api_key=key,
+                    ai_model_name=model,
+                    system_prompt_path=getattr(config, "system_prompt_path", "providers/prompts/writing_system.txt"),
+                    user_prompt_path=getattr(config, "user_prompt_path", "providers/prompts/writing_user.txt"),
+                )
+        else:
+            self.config = WRITING_CONFIG
+
         self._provider_name = "GEMINI_WRITING"
 
         if not self.config.gemini_api_key:
@@ -282,3 +296,81 @@ class GeminiWritingProvider(AbstractWritingProvider):
             raise MalformedAIResponseError(
                 f"Gemini response does not conform to WritingFeedbackDetail schema: {val_err}"
             ) from val_err
+
+    async def evaluate(
+        self,
+        prompt: Optional[str] = None,
+        essay: Optional[str] = None,
+        task_type: str = "TASK2",
+        task_prompt: Optional[str] = None,
+        essay_text: Optional[str] = None,
+    ) -> Any:
+        """
+        Unified, high-level evaluation interface returning aggregated criterion scores
+        and structured feedback details.
+        """
+        final_prompt = prompt or task_prompt or ""
+        final_essay = essay or essay_text or ""
+        norm_task_type = "TASK2" if "2" in str(task_type).upper() else "TASK1"
+
+        feedback_dict = await self.evaluate_essay(
+            task_type=norm_task_type,
+            task_prompt=final_prompt,
+            essay_text=final_essay,
+        )
+
+        # Extract criteria scores
+        scores = {}
+        criteria_list = feedback_dict.get("criteria", [])
+        for crit in criteria_list:
+            c_name = str(crit.get("criterion", "")).upper()
+            c_score = float(crit.get("score", 0.0))
+            if "RESPONSE" in c_name or "ACHIEVEMENT" in c_name or c_name in ("TR", "TA"):
+                scores["TR"] = c_score
+            elif "COHERENCE" in c_name or c_name == "CC":
+                scores["CC"] = c_score
+            elif "LEXICAL" in c_name or c_name == "LR":
+                scores["LR"] = c_score
+            elif "GRAMMATICAL" in c_name or c_name == "GRA":
+                scores["GRA"] = c_score
+
+        tr = scores.get("TR", 0.0)
+        cc = scores.get("CC", 0.0)
+        lr = scores.get("LR", 0.0)
+        gra = scores.get("GRA", 0.0)
+
+        # Cambridge IELTS Rounding
+        raw_avg = (tr + cc + lr + gra) / 4.0 if (tr + cc + lr + gra) > 0 else 0.0
+        floor_val = int(raw_avg)
+        rem = raw_avg - floor_val
+        if rem < 0.25:
+            overall = float(floor_val)
+        elif rem < 0.75:
+            overall = float(floor_val) + 0.5
+        else:
+            overall = float(floor_val) + 1.0
+
+        class WritingEvaluationResponse:
+            def __init__(self, overall_band: float, tr: float, cc: float, lr: float, gra: float, feedback: Dict[str, Any]):
+                self.overall_band = overall_band
+                self.task_achievement_score = tr
+                self.coherence_cohesion_score = cc
+                self.lexical_resource_score = lr
+                self.grammatical_range_score = gra
+                self.feedback_detail = feedback
+
+            def __repr__(self) -> str:
+                return (
+                    f"<WritingEvaluationResponse overall={self.overall_band} "
+                    f"TR={self.task_achievement_score} CC={self.coherence_cohesion_score} "
+                    f"LR={self.lexical_resource_score} GRA={self.grammatical_range_score}>"
+                )
+
+        return WritingEvaluationResponse(
+            overall_band=overall,
+            tr=tr,
+            cc=cc,
+            lr=lr,
+            gra=gra,
+            feedback=feedback_dict,
+        )
