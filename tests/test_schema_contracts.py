@@ -18,7 +18,8 @@ from jsonschema.validators import Draft202012Validator
 
 def load_schema(schema_filename: str) -> Dict[str, Any]:
     """Loads and returns a JSON schema from the schemas/ directory."""
-    schema_path = Path(__file__).parent / "schemas" / schema_filename
+    repo_root = Path(__file__).resolve().parent.parent if Path(__file__).resolve().parent.name == "tests" else Path(__file__).resolve().parent
+    schema_path = repo_root / "schemas" / schema_filename
     if not schema_path.exists():
         raise FileNotFoundError(f"Schema file not found: {schema_path}")
     return json.loads(schema_path.read_text(encoding="utf-8"))

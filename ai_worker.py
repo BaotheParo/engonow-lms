@@ -423,23 +423,18 @@ def _install_shutdown_handlers(shutdown_event: asyncio.Event) -> None:
                 )
 
 
-async def main() -> None:
-    """Run the configured worker until a shutdown signal is received."""
+async def run_worker(shutdown_event: asyncio.Event | None = None) -> None:
+    """Core consumer loop for processing speaking requests."""
     global _result_publisher
-
-    metrics_port = int(os.getenv("METRICS_PORT", "9090"))
-    start_http_server(metrics_port)
-    logger.info(
-        "[TELEMETRY] Prometheus metrics server started on port %d",
-        metrics_port,
-    )
 
     consumer, result_publisher, _local_broker = build_worker_transport(
         WORKER_CONFIG
     )
     _result_publisher = result_publisher
-    shutdown_event = asyncio.Event()
-    _install_shutdown_handlers(shutdown_event)
+
+    if shutdown_event is None:
+        shutdown_event = asyncio.Event()
+        _install_shutdown_handlers(shutdown_event)
 
     listener_task: asyncio.Task[None] | None = None
     shutdown_task: asyncio.Task[bool] | None = None
@@ -492,5 +487,65 @@ async def main() -> None:
                 await shutdown_task
 
 
+async def main() -> None:
+    """Run the standalone CLI worker with Prometheus server."""
+    metrics_port = int(os.getenv("METRICS_PORT", "9090"))
+    start_http_server(metrics_port)
+    logger.info(
+        "[TELEMETRY] Prometheus metrics server started on port %d",
+        metrics_port,
+    )
+    await run_worker()
+
+
+# ==============================================================================
+# Production FastAPI Application (Gunicorn UvicornWorker Entrypoint)
+# ==============================================================================
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Response
+from telemetry.metrics_server import get_prometheus_metrics
+
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    """Manages the background Kafka event consumer during the FastAPI lifecycle."""
+    shutdown_event = asyncio.Event()
+    worker_task = asyncio.create_task(run_worker(shutdown_event=shutdown_event))
+    try:
+        yield
+    finally:
+        shutdown_event.set()
+        worker_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker_task
+
+
+app = FastAPI(
+    title="ENGONOW AI Worker",
+    description="Multimodal Acoustic Engine, Provider Router, and Prometheus Metrics Exporter",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+
+@app.get("/health")
+async def health_check() -> dict[str, Any]:
+    """Health check endpoint conforming to Docker HEALTHCHECK and load balancer probes."""
+    return {
+        "status": "UP",
+        "service": "engonow-ai-worker",
+        "broker": WORKER_CONFIG.broker_type,
+        "provider": CONFIG.provider_name,
+    }
+
+
+@app.get("/metrics")
+async def metrics_endpoint() -> Response:
+    """Prometheus multi-process metrics aggregation endpoint."""
+    data, content_type = get_prometheus_metrics()
+    return Response(content=data, media_type=content_type)
+
+
 if __name__ == "__main__":
     asyncio.run(main())
+

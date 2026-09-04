@@ -1,20 +1,30 @@
 openapi: 3.1.0
+jsonSchemaDialect: "https://spec.openapis.org/oas/3.1/dialect/base"
 info:
   title: ENGONOW Smart LMS — AI Scoring & Evaluation Platform API
-  description: >
-    Complete OpenAPI 3.1 specification for the ENGONOW Smart LMS, covering
-    IELTS AI Writing assessment, claim-check AI Speaking assessment, psychometric
-    calibration administration, Server-Sent Events (SSE) live streaming, and deep tiered health monitoring.
   version: 1.0.0
-  contact:
-    name: ENGONOW Core Engineering Team
-    email: engineering@engonow.com
-
+  description: >-
+    Authoritative REST and Server-Sent Events (SSE) API specification for the ENGONOW Smart LMS.
+    Covers asynchronous IELTS Writing evaluation, multi-modal IELTS Speaking assessment
+    (Audio Claim-Check + Acoustic DSP + LLM Diagnostic Grounding), psychometric calibration administration,
+    real-time status streaming via Redis Pub/Sub fan-out, and deep tiered health monitoring.
 servers:
   - url: http://localhost:8080
-    description: Local / Docker Compose Environment
+    description: Local Development / Docker Compose
   - url: https://api.engonow.com
     description: Production Cluster Gateway
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Writing
+    description: IELTS Writing submission, evaluation, and live status streaming
+  - name: Speaking
+    description: IELTS Speaking submission, claim-check audio, and live status streaming
+  - name: Calibration Admin
+    description: Psychometric calibration corpus intake, human rating, adjudication, and gatekeeper split locks (ROLE_ADMIN required)
+  - name: System
+    description: Platform tiered health check and Prometheus metrics endpoints
 
 paths:
   # ----------------------------------------------------------------------------
@@ -22,10 +32,13 @@ paths:
   # ----------------------------------------------------------------------------
   /api/v1/writing/submissions/submit:
     post:
+      tags: [Writing]
+      operationId: submitWritingEvaluation
       summary: Submit IELTS essay for asynchronous AI scoring
-      description: Validates word count, persists submission in PENDING state, and emits transactional Outbox event to Kafka.
-      security:
-        - BearerAuth: []
+      description: >-
+        Asynchronously accepts student essay submission, validates word count (minimum 20 words, 50 characters),
+        persists submission in PENDING status, and publishes transactional Outbox event to Kafka topic
+        'engonow.writing.evaluation-requested.v1'.
       requestBody:
         required: true
         content:
@@ -33,29 +46,71 @@ paths:
             schema:
               $ref: '#/components/schemas/WritingSubmissionRequest'
       responses:
-        '202':
+        "202":
           description: Essay submission accepted and queued for evaluation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WritingSubmissionResponse'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
+        "400":
+          $ref: '#/components/responses/ValidationError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
-  /api/v1/writing/submissions/{id}/result:
+  /api/v1/writing/submissions/{submissionId}:
     get:
+      tags: [Writing]
+      operationId: getWritingSubmissionResult
       summary: Query final evaluated IELTS Writing score and detailed feedback
-      security:
-        - BearerAuth: []
+      description: >-
+        Retrieves graded IELTS Writing result, criterion score breakdown, sentence-level corrections,
+        and pedagogical improvement tips. Requires studentId query parameter for ownership verification.
       parameters:
-        - name: id
+        - name: submissionId
           in: path
           required: true
+          description: UUID of the writing submission
           schema:
             type: string
             format: uuid
+        - name: studentId
+          in: query
+          required: true
+          description: UUID of the student (for ownership authorization)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Evaluated scoring result retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WritingResultResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: Submission or student record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Submission evaluation is still pending or processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/writing/submissions/{id}/result:
+    get:
+      tags: [Writing]
+      operationId: getWritingResultAlias
+      summary: Alias to fetch Writing evaluation result
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
         - name: studentId
           in: query
           required: true
@@ -63,54 +118,79 @@ paths:
             type: string
             format: uuid
       responses:
-        '200':
-          description: Evaluated scoring result retrieved successfully
+        "200":
+          description: Evaluated scoring result
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WritingResultResponse'
-        '404':
-          $ref: '#/components/responses/NotFoundError'
-        '409':
-          description: Submission still pending or processing
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
 
-  /api/v1/writing-submissions/{id}/events:
+  /api/v1/writing/submissions/{id}/events:
     get:
-      summary: Real-Time SSE Stream for Writing Submission Status
-      description: >
-        Establishes a Server-Sent Events connection. Immediately replays current DB status,
-        then streams live status transitions (PENDING -> PROCESSING -> SCORED/FAILED) via Redis Pub/Sub fan-out.
-      security:
-        - BearerAuth: []
+      tags: [Writing]
+      operationId: streamWritingEvaluationEvents
+      summary: Server-Sent Events (SSE) stream for Writing evaluation status
+      description: >-
+        Establishes a Server-Sent Events (SSE) connection to receive real-time status transitions
+        (PENDING -> PROCESSING -> SCORED / FAILED). Emits the current DB status immediately on connect,
+        then listens on Redis Pub/Sub channel 'sse:submission:{id}'.
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+        - $ref: '#/components/parameters/SubmissionId'
       responses:
-        '200':
-          description: Live SSE event stream established
+        "200":
+          description: Live SSE event stream opened
+          headers:
+            X-Accel-Buffering:
+              schema:
+                type: string
+                example: "no"
+            Cache-Control:
+              schema:
+                type: string
+                example: "no-cache, no-transform"
           content:
             text/event-stream:
               schema:
-                type: string
-                example: "event: status\ndata: {\"status\":\"SCORED\",\"submissionId\":\"...\",\"resultId\":\"...\"}\n\n"
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
+                $ref: '#/components/schemas/SseStatusEvent'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/writing-submissions/{id}/events:
+    get:
+      tags: [Writing]
+      operationId: streamWritingSubmissionsEventsAlias
+      summary: Canonical alias for Writing SSE event stream
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        "200":
+          description: Live SSE event stream opened
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SseStatusEvent'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ----------------------------------------------------------------------------
   # Speaking Submissions & Results (Claim-Check Pattern)
   # ----------------------------------------------------------------------------
   /api/v1/speaking/submit:
     post:
+      tags: [Speaking]
+      operationId: submitSpeakingAttempt
       summary: Submit IELTS Speaking attempt via audio claim-check URI
-      description: Accepts object storage audio URI (zero audio bytes on Kafka) and queues multimodal acoustic + LLM evaluation.
-      security:
-        - BearerAuth: []
+      description: >-
+        Accepts object storage audio URI / claim-check reference and queues multimodal acoustic
+        continuity gating, feature extraction, and LLM diagnostic evaluation.
       requestBody:
         required: true
         content:
@@ -118,45 +198,127 @@ paths:
             schema:
               $ref: '#/components/schemas/SpeakingSubmissionRequest'
       responses:
-        '202':
+        "202":
           description: Speaking attempt accepted for scoring
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SpeakingSubmissionResponse'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
+        "400":
+          $ref: '#/components/responses/ValidationError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
-  /api/v1/speaking-submissions/{id}/events:
-    get:
-      summary: Real-Time SSE Stream for Speaking Attempt Status
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+  /api/v1/speaking/submissions/submit:
+    post:
+      tags: [Speaking]
+      operationId: submitSpeakingAttemptAlias
+      summary: Alias for Speaking submission endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeakingSubmissionRequest'
       responses:
-        '200':
-          description: Live SSE event stream established
+        "202":
+          description: Speaking attempt accepted for scoring
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeakingSubmissionResponse'
+
+  /api/v1/speaking/submissions/{id}:
+    get:
+      tags: [Speaking]
+      operationId: getSpeakingResult
+      summary: Fetch final evaluated IELTS Speaking score and acoustic diagnostics
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        "200":
+          description: Evaluated speaking result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeakingResultResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/speaking-submissions/{id}/result:
+    get:
+      tags: [Speaking]
+      operationId: getSpeakingResultAlias
+      summary: Alias to fetch Speaking evaluation result
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        "200":
+          description: Evaluated speaking result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeakingResultResponse'
+
+  /api/v1/speaking/submissions/{id}/events:
+    get:
+      tags: [Speaking]
+      operationId: streamSpeakingEvaluationEvents
+      summary: Server-Sent Events (SSE) stream for Speaking evaluation status
+      description: >-
+        Streams real-time status transitions for an ongoing speaking evaluation.
+        Emits current state immediately, then fans out live events from Redis topic 'sse:submission:{id}'.
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        "200":
+          description: Live SSE event stream opened
+          headers:
+            X-Accel-Buffering:
+              schema:
+                type: string
+                example: "no"
+            Cache-Control:
+              schema:
+                type: string
+                example: "no-cache, no-transform"
           content:
             text/event-stream:
               schema:
-                type: string
+                $ref: '#/components/schemas/SseStatusEvent'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/speaking-submissions/{id}/events:
+    get:
+      tags: [Speaking]
+      operationId: streamSpeakingSubmissionsEventsAlias
+      summary: Canonical alias for Speaking SSE event stream
+      parameters:
+        - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        "200":
+          description: Live SSE event stream opened
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SseStatusEvent'
 
   # ----------------------------------------------------------------------------
   # Psychometric Calibration & Admin APIs (ROLE_ADMIN Required)
   # ----------------------------------------------------------------------------
   /api/v1/admin/calibration/corpus-items:
     post:
+      tags: [Calibration Admin]
+      operationId: ingestCorpusItem
       summary: Ingest Ground-Truth Calibration Item
-      security:
-        - BearerAuth: []
+      description: Ingests an essay or speaking transcript into the Golden Corpus with target band stratum.
       requestBody:
         required: true
         content:
@@ -164,18 +326,18 @@ paths:
             schema:
               $ref: '#/components/schemas/CorpusItemCreateRequest'
       responses:
-        '201':
+        "201":
           description: Calibration item ingested successfully
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '403':
-          $ref: '#/components/responses/ForbiddenError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/admin/calibration/items/{id}/ratings:
     post:
+      tags: [Calibration Admin]
+      operationId: submitHumanRating
       summary: Submit Human Examiner Rating for Inter-Rater Reliability (ICC)
-      security:
-        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -190,14 +352,18 @@ paths:
             schema:
               $ref: '#/components/schemas/HumanRatingSubmitRequest'
       responses:
-        '201':
-          description: Human rating recorded
+        "201":
+          description: Human rating recorded successfully
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/admin/calibration/items/{id}/adjudicate:
     post:
+      tags: [Calibration Admin]
+      operationId: adjudicateCorpusItem
       summary: Senior Examiner Adjudication for Discordant Items
-      security:
-        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -212,137 +378,653 @@ paths:
             schema:
               $ref: '#/components/schemas/SeniorAdjudicationRequest'
       responses:
-        '200':
+        "200":
           description: Item adjudicated and consensus reference score set
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/admin/calibration/lock-split:
     post:
+      tags: [Calibration Admin]
+      operationId: lockStratifiedSplit
       summary: Execute Stratified 60/40 Split Lock (Tuning vs. Gatekeeper)
-      security:
-        - BearerAuth: []
+      description: Locks the Golden Corpus items into permanent stratified splits preventing benchmark leakage.
       responses:
-        '200':
+        "200":
           description: Dataset splits locked permanently
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   # ----------------------------------------------------------------------------
   # Observability & Deep Tiered Health
   # ----------------------------------------------------------------------------
   /health:
     get:
+      tags: [System]
+      operationId: getDeepHealth
       summary: Tiered Deep Health Check Endpoint
-      description: >
-        Inspects in-memory circuit breaker states, Redis connectivity, PostgreSQL connection pool,
-        and Kafka health without performing live LLM billing calls.
+      description: >-
+        Aggregates PostgreSQL connection pool, Redis liveness, Kafka broker connectivity,
+        and LLM circuit breaker states (derived from in-memory status without initiating billing calls).
+      security: []
       responses:
-        '200':
+        "200":
           description: Health check returned successfully (UP, DEGRADED, or DOWN)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthStatusResponse'
+                $ref: '#/components/schemas/HealthStatus'
+
+  /actuator/health:
+    get:
+      tags: [System]
+      operationId: getActuatorHealth
+      summary: Spring Boot Actuator Standard Health Check
+      security: []
+      responses:
+        "200":
+          description: Service health indicator
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "UP"
 
   /actuator/prometheus:
     get:
+      tags: [System]
+      operationId: scrapePrometheusMetrics
       summary: Prometheus Metrics Scrape Endpoint (Java LMS Core)
+      security: []
       responses:
-        '200':
-          description: Standard Prometheus text format metrics
+        "200":
+          description: Standard Prometheus text format metrics exposition
 
+# ------------------------------------------------------------------------------
+# Components & Schemas
+# ------------------------------------------------------------------------------
 components:
   securitySchemes:
-    BearerAuth:
+    bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
 
+  parameters:
+    SubmissionId:
+      name: id
+      in: path
+      required: true
+      description: UUID of the submission or session
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient user privileges or unauthorized resource ownership
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Requested resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Request payload failed schema or business constraint validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
   schemas:
+    BandScore:
+      type: number
+      minimum: 0.0
+      maximum: 9.0
+      multipleOf: 0.5
+      description: Official IELTS band score (0.0 to 9.0 in 0.5 step increments).
+
+    NullableBandScore:
+      type: [number, "null"]
+      minimum: 0.0
+      maximum: 9.0
+      description: IELTS band score, or null when acoustic exclusion triggers.
+
     WritingSubmissionRequest:
       type: object
-      required: [studentId, taskType, promptText, essayText]
+      required: [studentId, taskType, taskPrompt, essayText]
       properties:
+        studentId:
+          type: string
+          format: uuid
+          description: UUID of the student submitting the essay
+          example: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+        taskType:
+          type: string
+          enum: [ACADEMIC_TASK1, GENERAL_TASK1, TASK2, FULL_TEST]
+          description: IELTS Writing task category
+          example: "TASK2"
+        taskPrompt:
+          type: string
+          minLength: 1
+          description: The prompt question or topic statement assigned to the student
+          example: "Some people believe that unpaid community service should be compulsory in high school. Discuss both views and give your opinion."
+        essayText:
+          type: string
+          minLength: 50
+          description: Full text of the essay written by the student (minimum 20 words, 50 characters)
+          example: "In contemporary society, the proposition of incorporating mandatory unpaid community service into high school curriculums has sparked considerable debate..."
+
+    WritingSubmissionResponse:
+      type: object
+      required: [id, studentId, taskType, wordCount, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique UUID identifier of the writing submission
+          example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
         studentId:
           type: string
           format: uuid
         taskType:
           type: string
-          enum: [TASK1_ACADEMIC, TASK1_GENERAL, TASK2]
-        promptText:
+          enum: [ACADEMIC_TASK1, GENERAL_TASK1, TASK2, FULL_TEST]
+        wordCount:
+          type: integer
+          example: 285
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+        createdAt:
           type: string
-        essayText:
-          type: string
+          format: date-time
 
-    WritingSubmissionResponse:
+    SubmissionStatus:
+      type: string
+      enum: [PENDING, PROCESSING, SCORED, FAILED]
+      description: Asynchronous evaluation lifecycle status
+
+    SseStatusEvent:
       type: object
+      required: [status, submissionId, subsystem, timestamp]
       properties:
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
         submissionId:
           type: string
           format: uuid
-        studentId:
-          type: string
+        resultId:
+          type: [string, "null"]
           format: uuid
-        status:
+          description: UUID of the generated result record (populated when status is SCORED)
+        subsystem:
           type: string
-          enum: [PENDING, PROCESSING, SCORED, FAILED]
-        createdAt:
+          enum: [WRITING, SPEAKING]
+        timestamp:
           type: string
           format: date-time
 
     WritingResultResponse:
       type: object
+      required:
+        - submissionId
+        - overallBand
+        - taskAchievementScore
+        - coherenceCohesionScore
+        - lexicalResourceScore
+        - grammaticalRangeScore
+        - feedbackDetail
+        - evaluatedBy
+        - resultVersion
+        - evaluatedAt
       properties:
-        resultId:
-          type: string
-          format: uuid
         submissionId:
           type: string
           format: uuid
         overallBand:
-          type: number
-          format: double
-          example: 7.5
+          $ref: '#/components/schemas/BandScore'
         taskAchievementScore:
-          type: number
+          $ref: '#/components/schemas/BandScore'
         coherenceCohesionScore:
-          type: number
+          $ref: '#/components/schemas/BandScore'
         lexicalResourceScore:
-          type: number
+          $ref: '#/components/schemas/BandScore'
         grammaticalRangeScore:
-          type: number
+          $ref: '#/components/schemas/BandScore'
+        feedbackDetail:
+          $ref: '#/components/schemas/WritingFeedbackDetail'
         evaluatedBy:
           type: string
           enum: [AI_AUTO, AI_AUTO_UNCALIBRATED, HUMAN_EXAMINER]
-        feedbackDetail:
-          type: object
+          example: "AI_AUTO"
+        resultVersion:
+          type: integer
+          example: 1
+        evaluatedAt:
+          type: string
+          format: date-time
+
+    WritingFeedbackDetail:
+      type: object
+      required:
+        - examinerSummary
+        - essayMetrics
+        - criteria
+        - corrections
+        - cohesiveDeviceAnalysis
+        - vocabularyUpgrades
+        - improvementTips
+      properties:
+        examinerSummary:
+          type: string
+        essayMetrics:
+          $ref: '#/components/schemas/EssayMetrics'
+        criteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/WritingCriterionFeedback'
+        corrections:
+          type: array
+          items:
+            $ref: '#/components/schemas/SentenceCorrection'
+        cohesiveDeviceAnalysis:
+          $ref: '#/components/schemas/CohesiveDeviceAnalysis'
+        vocabularyUpgrades:
+          type: array
+          items:
+            $ref: '#/components/schemas/VocabularyUpgrade'
+        improvementTips:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImprovementTip'
+
+    EssayMetrics:
+      type: object
+      required:
+        - wordCount
+        - sentenceCount
+        - paragraphCount
+        - averageSentenceLength
+        - academicWordPercentage
+        - readabilityScore
+      properties:
+        wordCount:
+          type: integer
+        sentenceCount:
+          type: integer
+        paragraphCount:
+          type: integer
+        averageSentenceLength:
+          type: number
+        academicWordPercentage:
+          type: number
+        readabilityScore:
+          type: number
+
+    WritingCriterionFeedback:
+      type: object
+      required: [criterion, score, summary, strengths, weaknesses]
+      properties:
+        criterion:
+          type: string
+          enum: [TASK_ACHIEVEMENT, TASK_RESPONSE, COHERENCE_COHESION, LEXICAL_RESOURCE, GRAMMATICAL_RANGE_ACCURACY]
+        score:
+          $ref: '#/components/schemas/BandScore'
+        summary:
+          type: string
+        strengths:
+          type: array
+          items:
+            type: string
+        weaknesses:
+          type: array
+          items:
+            type: string
+
+    SentenceCorrection:
+      type: object
+      required: [startIndex, endIndex, originalSentence, correctedSentence, errorType, severity, explanation]
+      properties:
+        startIndex:
+          type: integer
+        endIndex:
+          type: integer
+        originalSentence:
+          type: string
+        correctedSentence:
+          type: string
+        errorType:
+          type: string
+          enum: [GRAMMAR, VOCABULARY, SPELLING, PUNCTUATION, COHESION, TASK_RELEVANCE]
+        severity:
+          type: string
+          enum: [MINOR, MAJOR, CRITICAL]
+        explanation:
+          type: string
+        betterAlternative:
+          type: [string, "null"]
+
+    CohesiveDeviceAnalysis:
+      type: object
+      required: [usedDevices, overusedOrRepetitive, suggestedTransitions]
+      properties:
+        usedDevices:
+          type: array
+          items:
+            type: string
+        overusedOrRepetitive:
+          type: array
+          items:
+            type: string
+        suggestedTransitions:
+          type: array
+          items:
+            type: string
+
+    VocabularyUpgrade:
+      type: object
+      required: [originalWordOrPhrase, contextInEssay, upgradedAlternatives]
+      properties:
+        originalWordOrPhrase:
+          type: string
+        contextInEssay:
+          type: string
+        upgradedAlternatives:
+          type: array
+          items:
+            type: string
+        collocationNotes:
+          type: [string, "null"]
+
+    ImprovementTip:
+      type: object
+      required: [criterion, tipText]
+      properties:
+        criterion:
+          type: string
+        tipText:
+          type: string
+        targetBand:
+          type: [number, "null"]
+
+    # --------------------------------------------------------------------------
+    # Speaking Schemas & Acoustic Diagnostics
+    # --------------------------------------------------------------------------
+    AudioReference:
+      type: object
+      required: [storageProvider, bucket, objectKey, checksumSha256, contentType, durationSeconds]
+      properties:
+        storageProvider:
+          type: string
+          enum: [MINIO, S3, GCS]
+          example: "MINIO"
+        bucket:
+          type: string
+          example: "engonow-audio-recordings"
+        objectKey:
+          type: string
+          example: "recordings/2026/09/attempt-001.wav"
+        checksumSha256:
+          type: string
+          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        contentType:
+          type: string
+          example: "audio/wav"
+        durationSeconds:
+          type: number
+          example: 64.5
 
     SpeakingSubmissionRequest:
       type: object
-      required: [attemptId, studentId, part, audioUrl]
       properties:
-        attemptId:
-          type: string
-          format: uuid
         studentId:
           type: string
           format: uuid
         part:
           type: string
           enum: [PART_1, PART_2, PART_3]
+          example: "PART_2"
+        topicPrompt:
+          type: string
+          example: "Describe a memorable journey you took."
+        audioRef:
+          $ref: '#/components/schemas/AudioReference'
         audioUrl:
           type: string
           format: uri
-        transcript:
+        sessionId:
           type: string
+        questionsMetadata:
+          type: object
 
     SpeakingSubmissionResponse:
       type: object
+      required: [sessionId, status, message]
       properties:
-        attemptId:
+        sessionId:
           type: string
-          format: uuid
+          example: "speaking-session-882"
         status:
           type: string
           enum: [ACCEPTED, PROCESSING, COMPLETED, FAILED]
+          example: "ACCEPTED"
+        message:
+          type: string
+          example: "Speaking evaluation queued successfully"
 
+    SpeakingResultResponse:
+      type: object
+      required:
+        - feedbackDetail
+        - evaluatedBy
+        - requiresHumanReview
+      properties:
+        overallBand:
+          $ref: '#/components/schemas/NullableBandScore'
+          description: Overall band score, or null if acoustic continuity gate triggered exclusion.
+        fluencyCoherenceScore:
+          $ref: '#/components/schemas/NullableBandScore'
+        lexicalResourceScore:
+          $ref: '#/components/schemas/NullableBandScore'
+        grammaticalRangeScore:
+          $ref: '#/components/schemas/NullableBandScore'
+        pronunciationScore:
+          $ref: '#/components/schemas/NullableBandScore'
+        evaluatedBy:
+          type: string
+          enum: [AI_AUTO, AI_AUTO_UNCALIBRATED, HUMAN_EXAMINER]
+          example: "AI_AUTO"
+        requiresHumanReview:
+          type: boolean
+          description: Set to true if acoustic exclusion triggered or uncalibrated fallback model was used.
+          example: false
+        feedbackDetail:
+          $ref: '#/components/schemas/SpeakingFeedbackDetail'
+
+    SpeakingMetrics:
+      type: object
+      required: [totalWords]
+      properties:
+        totalWords:
+          type: integer
+          example: 120
+        speakingRateWpm:
+          type: [number, "null"]
+          example: 128.5
+        articulationRateWpm:
+          type: [number, "null"]
+          example: 145.0
+        phonationRatio:
+          type: [number, "null"]
+          example: 0.72
+        pauseCount:
+          type: [integer, "null"]
+          example: 6
+        totalPauseDurationSeconds:
+          type: [number, "null"]
+          example: 3.8
+        stressAccuracyRatio:
+          type: [number, "null"]
+          example: 0.85
+        pitchVariationCv:
+          type: [number, "null"]
+          example: 0.17
+        monotoneFlag:
+          type: [boolean, "null"]
+          example: false
+        dominantContour:
+          type: [string, "null"]
+          enum: [FALLING, RISING, MIXED, FLAT, null]
+          example: "FALLING"
+
+    SpeakingCriterionFeedback:
+      type: object
+      required: [criterion, summary, strengths, weaknesses]
+      properties:
+        criterion:
+          type: string
+          enum: [FLUENCY_COHERENCE, LEXICAL_RESOURCE, GRAMMATICAL_RANGE_ACCURACY, PRONUNCIATION]
+        score:
+          $ref: '#/components/schemas/NullableBandScore'
+        summary:
+          type: string
+        strengths:
+          type: array
+          items:
+            type: string
+        weaknesses:
+          type: array
+          items:
+            type: string
+        acousticGroundingNote:
+          type: [string, "null"]
+        bandGapAnalysis:
+          type: [string, "null"]
+
+    SpeakingGrammarCorrection:
+      type: object
+      required: [startIndex, endIndex, originalUtterance, correctedUtterance, errorType, severity, explanation]
+      properties:
+        startIndex:
+          type: integer
+        endIndex:
+          type: integer
+        originalUtterance:
+          type: string
+        correctedUtterance:
+          type: string
+        errorType:
+          type: string
+          enum: [TENSE, SUBJECT_VERB_AGREEMENT, ARTICLE, PREPOSITION, WORD_ORDER, CLAUSE_STRUCTURE, PRONOUN, PLURALITY, OTHER]
+        severity:
+          type: string
+          enum: [MINOR, MAJOR, CRITICAL]
+        explanation:
+          type: string
+        betterAlternative:
+          type: [string, "null"]
+
+    PhonemeDiagnostic:
+      type: object
+      required: [word, expectedPhonemeIpa, errorType, feedback]
+      properties:
+        word:
+          type: string
+        expectedPhonemeIpa:
+          type: string
+        producedPhonemeIpa:
+          type: [string, "null"]
+        errorType:
+          type: string
+          enum: [SUBSTITUTION, DELETION, INSERTION]
+        gopScore:
+          type: [number, "null"]
+        feedback:
+          type: string
+
+    SpeakingFeedbackDetail:
+      type: object
+      required:
+        - examinerSummary
+        - speakingMetrics
+        - criteria
+        - grammarCorrections
+        - phonemeDiagnostics
+        - vocabularyUpgrades
+        - improvementTips
+      properties:
+        examinerSummary:
+          type: string
+        speakingMetrics:
+          $ref: '#/components/schemas/SpeakingMetrics'
+        criteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpeakingCriterionFeedback'
+        grammarCorrections:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpeakingGrammarCorrection'
+        phonemeDiagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhonemeDiagnostic'
+        vocabularyUpgrades:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpeakingVocabularyUpgrade'
+        improvementTips:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpeakingImprovementTip'
+
+    SpeakingVocabularyUpgrade:
+      type: object
+      required: [originalWordOrPhrase, contextInSpeech, upgradedAlternatives]
+      properties:
+        originalWordOrPhrase:
+          type: string
+        contextInSpeech:
+          type: string
+        upgradedAlternatives:
+          type: array
+          items:
+            type: string
+        collocationNotes:
+          type: [string, "null"]
+
+    SpeakingImprovementTip:
+      type: object
+      required: [criterion, tipText]
+      properties:
+        criterion:
+          type: string
+          enum: [FLUENCY_COHERENCE, LEXICAL_RESOURCE, GRAMMATICAL_RANGE_ACCURACY, PRONUNCIATION]
+        tipText:
+          type: string
+        targetBand:
+          type: [number, "null"]
+
+    # --------------------------------------------------------------------------
+    # Psychometric Calibration Models
+    # --------------------------------------------------------------------------
     CorpusItemCreateRequest:
       type: object
       required: [subsystem, promptText, targetBandStratum]
@@ -355,6 +1037,8 @@ components:
         targetBandStratum:
           type: string
           enum: [BAND_4_5, BAND_5_5, BAND_6_5, BAND_7_5, BAND_8_5]
+        canonicalReferenceText:
+          type: string
 
     HumanRatingSubmitRequest:
       type: object
@@ -364,6 +1048,8 @@ components:
           type: string
         criterionScores:
           type: object
+          additionalProperties:
+            type: number
 
     SeniorAdjudicationRequest:
       type: object
@@ -373,11 +1059,17 @@ components:
           type: string
         adjudicatedScores:
           type: object
+          additionalProperties:
+            type: number
         rationale:
           type: string
 
-    HealthStatusResponse:
+    # --------------------------------------------------------------------------
+    # System & Health Models
+    # --------------------------------------------------------------------------
+    HealthStatus:
       type: object
+      required: [status, components]
       properties:
         status:
           type: string
@@ -387,6 +1079,7 @@ components:
           format: date-time
         components:
           type: object
+          required: [postgresql, redis, kafka, aiProviders]
           properties:
             postgresql:
               type: string
@@ -399,45 +1092,27 @@ components:
               enum: [UP, DOWN]
             aiProviders:
               type: object
-              properties:
-                overallStatus:
-                  type: string
-                  enum: [UP, DEGRADED, DOWN]
+              additionalProperties:
+                type: string
+                enum: [CLOSED, OPEN, HALF_OPEN]
 
-  responses:
-    BadRequestError:
-      description: Bad Request / Schema validation failure
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error: { type: string }
-              message: { type: string }
-    UnauthorizedError:
-      description: Missing or invalid authentication token
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error: { type: string }
-              status: { type: integer, example: 401 }
-    ForbiddenError:
-      description: Insufficient privileges or unauthorized submission ownership
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error: { type: string }
-              status: { type: integer, example: 403 }
-    NotFoundError:
-      description: Requested resource not found
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error: { type: string }
-              status: { type: integer, example: 404 }
+    ErrorResponse:
+      type: object
+      required: [timestamp, status, error, message, path]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-09-04T04:20:00Z"
+        status:
+          type: integer
+          example: 400
+        error:
+          type: string
+          example: "Bad Request"
+        message:
+          type: string
+          example: "studentId must not be null"
+        path:
+          type: string
+          example: "/api/v1/writing/submissions/submit"

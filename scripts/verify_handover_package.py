@@ -115,9 +115,11 @@ def verify_handover_documentation() -> bool:
     print("\n--- Verifying Production Handover Documentation Package (docs/handover/) ---")
     doc_files = [
         ("docs/handover/API_CONTRACT.yaml", 1000),
+        ("docs/handover/ARCHITECTURE_GUIDE.md", 1000),
+        ("docs/handover/ARCHITECTURE_DECISION_LOG.md", 800),
+        ("docs/handover/CALIBRATION_GUIDE.md", 1000),
         ("docs/handover/DEPLOYMENT_GUIDE.md", 800),
         ("docs/handover/RUNBOOK.md", 800),
-        ("docs/handover/ARCHITECTURE_DECISION_LOG.md", 800),
         ("docs/handover/KNOWN_LIMITATIONS.md", 500),
         ("docs/handover/TEST_REPORT.md", 1000),
     ]

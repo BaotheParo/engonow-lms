@@ -17,6 +17,14 @@ uvicorn.log
 *.tmp
 *.tmp.*
 
+# Test Caches & Audio Dumps
+.pytest_cache/
+.coverage
+htmlcov/
+temp_audio/
+*.waveform.dat
+*.wav.tmp
+
 # OS / IDE
 .DS_Store
 .idea/
