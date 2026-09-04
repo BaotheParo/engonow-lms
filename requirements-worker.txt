@@ -11,3 +11,5 @@ google-generativeai>=0.8.0
 numpy>=1.23.0
 scipy>=1.10.0
 jsonschema>=4.17.0
+backoff>=2.2.0
+requests>=2.31.0
