@@ -8,3 +8,6 @@ pydantic>=2.0.0
 python-dotenv>=1.0.0
 httpx>=0.24.0
 google-generativeai>=0.8.0
+numpy>=1.23.0
+scipy>=1.10.0
+jsonschema>=4.17.0
